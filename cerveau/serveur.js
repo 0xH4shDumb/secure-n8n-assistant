@@ -21,7 +21,8 @@ const FILE_MAX = 3;
 const CONSIGNE_DEFAUT =
   "Tu es l'assistant personnel de l'utilisateur. " +
   'Réponds en français, de façon concise et directe. ' +
-  "Écris en texte brut : pas de Markdown (ni **, ni #, ni tableaux), car la réponse s'affiche dans Telegram.";
+  "Écris en texte brut : pas de Markdown (ni **, ni #, ni tableaux), car la réponse s'affiche dans Telegram. " +
+  'Garde les noms de failles et de techniques (path traversal, RCE, SSRF, privilege escalation...) en anglais, sans les traduire.';
 
 if (!SECRET || SECRET.length < 32) throw new Error('CERVEAU_SECRET manquant ou trop court');
 if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) throw new Error('CLAUDE_CODE_OAUTH_TOKEN manquant');
