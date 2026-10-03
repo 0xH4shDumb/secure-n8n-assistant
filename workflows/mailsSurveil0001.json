@@ -328,7 +328,10 @@
           "id": "relaisSecret0001",
           "name": "Secret du relais Telegram"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
     },
     {
       "id": "n-note",

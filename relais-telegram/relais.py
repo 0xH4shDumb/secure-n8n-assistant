@@ -22,6 +22,7 @@ import json
 import os
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -174,6 +175,14 @@ class Interne(BaseHTTPRequestHandler):
             return self.repondre(200, {"ok": r.get("ok", False)})
         except (KeyError, ValueError, TypeError):
             return self.repondre(400, {"erreur": "paramètres invalides"})
+        except urllib.error.HTTPError as e:
+            # La réponse de Telegram (code + description) ne contient jamais le token : on peut la journaliser
+            try:
+                raison = json.load(e).get("description", "")[:200]
+            except Exception:  # noqa: BLE001
+                raison = ""
+            journal(f"{chemin} : Telegram {e.code} {raison}")
+            return self.repondre(502, {"erreur": f"Telegram a refusé ({e.code} {raison})"})
         except Exception as e:  # noqa: BLE001 - jamais str(e) : pourrait contenir l'URL (token)
             journal(f"{chemin} : {type(e).__name__}")
             return self.repondre(502, {"erreur": f"Telegram a refusé ({type(e).__name__})"})
