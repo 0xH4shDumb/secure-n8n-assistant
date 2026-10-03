@@ -27,8 +27,12 @@ services:
       # Purge automatique de l'historique d'exécutions après 14 jours
       - EXECUTIONS_DATA_PRUNE=true
       - EXECUTIONS_DATA_MAX_AGE=336
+      # Les blocs « fichier » de n8n ne peuvent lire QUE l'état publié par l'hôte
+      - N8N_RESTRICT_FILE_ACCESS_TO=/etat-hote
     volumes:
       - n8n_data:/home/node/.n8n
+      # État de l'hôte (chien de garde, sauvegardes) pour le tableau de bord, en LECTURE SEULE
+      - ${HOME}/.local/state/assistant-etat:/etat-hote:ro
     security_opt:
       - no-new-privileges:true
     networks: [default, interne]

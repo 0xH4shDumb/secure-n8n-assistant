@@ -15,7 +15,32 @@ ETAT="${XDG_STATE_HOME:-$HOME/.local/state}/assistant-chien-de-garde"
 mkdir -p "$ETAT" && chmod 700 "$ETAT"
 [ -e "$ETAT/pause" ] && { echo "En pause (fichier $ETAT/pause présent)."; exit 0; }
 
-journal() { echo "$(date '+%F %T') $*"; }
+# État publié pour le tableau de bord (n8n le lit en lecture seule)
+PUBLIC="${XDG_STATE_HOME:-$HOME/.local/state}/assistant-etat"
+mkdir -p "$PUBLIC" && chmod 755 "$PUBLIC"
+
+journal() {
+  echo "$(date '+%F %T') $*"
+  echo "$(date '+%F %T') $*" >> "$PUBLIC/journal.log"
+  tail -n 30 "$PUBLIC/journal.log" > "$PUBLIC/journal.tmp" && mv "$PUBLIC/journal.tmp" "$PUBLIC/journal.log"
+}
+
+publier_etat() {
+  local stats premier=1
+  stats=$(docker stats --no-stream --format '{{.Name}}|{{.MemUsage}}' 2>/dev/null)
+  {
+    printf '{"date":"%s","services":{' "$(date -Iseconds)"
+    for svc in "${SERVICES[@]}"; do
+      [ $premier = 1 ] || printf ','
+      premier=0
+      printf '"%s":{"etat":"%s","depuis":"%s","memoire":"%s","redemarrages":%s}' "$svc" "$(etat "$svc")" \
+        "$(docker inspect -f '{{.State.StartedAt}}' "$svc" 2>/dev/null)" \
+        "$(echo "$stats" | grep "^$svc|" | cut -d'|' -f2 | sed 's/ //g')" \
+        "$(docker inspect -f '{{.RestartCount}}' "$svc" 2>/dev/null || echo 0)"
+    done
+    printf '}}\n'
+  } > "$PUBLIC/etat.tmp" && mv "$PUBLIC/etat.tmp" "$PUBLIC/etat.json"
+}
 
 alerter() {
   local texte="$1" token chat
@@ -69,3 +94,5 @@ for svc in "${SERVICES[@]}"; do
     alerter "🚨 $svc est en panne ($avant) et la réparation automatique a échoué. Intervention nécessaire : docker compose logs $svc"
   fi
 done
+
+publier_etat

@@ -51,7 +51,7 @@ docker exec n8n rm -f /tmp/identifiants.json
 ls -1t "$LOCAL"/identifiants-*.json | tail -n +$((GARDER + 1)) | xargs -r rm -f
 
 # Fichiers de secrets des conteneurs (nécessaires pour une restauration) : local uniquement
-tar -czf "$LOCAL/secrets-$(date +%F).tar.gz" .env relais.env cerveau.env voix.env studio.env
+tar -czf "$LOCAL/secrets-$(date +%F).tar.gz" .env relais.env cerveau.env voix.env studio.env tableau.env
 chmod 600 "$LOCAL/secrets-$(date +%F).tar.gz"
 ls -1t "$LOCAL"/secrets-*.tar.gz | tail -n +$((GARDER + 1)) | xargs -r rm -f
 
@@ -64,3 +64,8 @@ else
   git push -q
   echo "Sauvegarde envoyée."
 fi
+
+# État publié pour le tableau de bord
+ETAT_PUBLIC="${XDG_STATE_HOME:-$HOME/.local/state}/assistant-etat"
+mkdir -p "$ETAT_PUBLIC"
+printf '{"date":"%s","commit":"%s"}\n' "$(date -Iseconds)" "$(git rev-parse --short HEAD)" > "$ETAT_PUBLIC/sauvegarde.json"

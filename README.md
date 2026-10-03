@@ -21,6 +21,7 @@ and nothing is ever sent on your behalf without your explicit double confirmatio
 | 🤖 | **Conversational bot** | Free text **or voice** questions, short-term memory, answers grounded in your real data (agenda, emails, system status, threat watch). |
 | 📧 | **Email assistant** | New important email → notification with buttons → AI-drafted reply → edit by text or voice → Gmail draft **or** send after double confirmation. |
 | 🩺 | **Remote supervision** | `/statut`, `/erreurs`, `/pause`, `/reprendre` from Telegram; failure alerts; nightly backups. |
+| 🖥️ | **Web dashboard** | Read-only local page (`/webhook/tableau`) with containers, workflows, upcoming runs, pending emails, threat watch and watchdog journal. Basic auth, Host-header check against DNS rebinding, everything escaped. |
 | 🐕 | **Watchdog** | Docker healthchecks on every container + a systemd watchdog every 5 min that self-heals (restart, then recreate) and alerts **directly** through the Telegram API, independently of n8n and the relay. |
 
 ## Architecture

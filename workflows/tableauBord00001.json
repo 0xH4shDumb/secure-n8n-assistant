@@ -1,0 +1,323 @@
+{
+  "id": "tableauBord00001",
+  "name": "Tableau de bord",
+  "nodes": [
+    {
+      "id": "n-webhook",
+      "name": "Ouvrir le tableau",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "8d4e87c3-29d2-4d8c-9b82-b7073b10cb43",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "tableau",
+        "authentication": "basicAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "tableauAcces0001",
+          "name": "Accès au tableau de bord"
+        }
+      }
+    },
+    {
+      "id": "n-lire",
+      "name": "Lire l'état de l'hôte",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "/etat-hote/*",
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "n-decoder",
+      "name": "Décoder l'état de l'hôte",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Fichiers publiés par l'hôte (lecture seule) : état des conteneurs, sauvegarde, journal du chien de garde\nconst hote = { etat: null, sauvegarde: null, journal: [] };\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  const nom = items[i].binary?.data?.fileName;\n  if (!nom) continue;\n  try {\n    const texte = (await this.helpers.getBinaryDataBuffer(i, 'data')).toString('utf8');\n    if (nom === 'etat.json') hote.etat = JSON.parse(texte);\n    else if (nom === 'sauvegarde.json') hote.sauvegarde = JSON.parse(texte);\n    else if (nom === 'journal.log') hote.journal = texte.trim().split('\\n').filter(Boolean).slice(-12).reverse();\n  } catch {}\n}\nreturn [{ json: hote }];\n"
+      }
+    },
+    {
+      "id": "n-wfs",
+      "name": "Lister les workflows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "url": "http://127.0.0.1:5678/api/v1/workflows?limit=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "n8nApi": {
+          "id": "OuTeRyvTuWSI1UQt",
+          "name": "API n8n (bot)"
+        }
+      },
+      "executeOnce": true,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "n-exs",
+      "name": "Dernières exécutions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "url": "http://127.0.0.1:5678/api/v1/executions?limit=250",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "n8nApi": {
+          "id": "OuTeRyvTuWSI1UQt",
+          "name": "API n8n (bot)"
+        }
+      },
+      "executeOnce": true,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "n-surv",
+      "name": "Mémoire de la surveillance",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "url": "http://127.0.0.1:5678/api/v1/workflows/mailsSurveil0001",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "n8nApi": {
+          "id": "OuTeRyvTuWSI1UQt",
+          "name": "API n8n (bot)"
+        }
+      },
+      "executeOnce": true,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "n-direct",
+      "name": "Mesures en direct",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Mesures en direct : santé des services et veille (sources publiques), chacune avec un délai court\nconst sante = { n8n: true };\nfor (const [nom, url] of Object.entries({\n  'relais-telegram': 'http://relais-telegram:8081/sante', cerveau: 'http://cerveau:8080/sante',\n  voix: 'http://voix:8080/sante', studio: 'http://studio:8080/sante' })) {\n  try { await this.helpers.httpRequest({ url, timeout: 4000 }); sante[nom] = true; } catch { sante[nom] = false; }\n}\nconst veille = { kev: null, certfr: null };\nconst deuxJours = Date.now() - 2 * 24 * 3600 * 1000;\ntry {\n  const k = await this.helpers.httpRequest({ url: 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json', json: true, timeout: 15000 });\n  veille.kev = (k.vulnerabilities ?? []).filter(v => new Date(v.dateAdded).getTime() >= deuxJours)\n    .map(v => ({ id: v.cveID, titre: `${v.vendorProject} ${v.product}`, lien: `https://nvd.nist.gov/vuln/detail/${v.cveID}`, ransomware: v.knownRansomwareCampaignUse === 'Known' }));\n} catch {}\ntry {\n  const x = String(await this.helpers.httpRequest({ url: 'https://www.cert.ssi.gouv.fr/alerte/feed/', timeout: 15000 }));\n  veille.certfr = [...x.matchAll(/<item>[\\s\\S]*?<title>([^<]+)<\\/title>[\\s\\S]*?<link>([^<]+)<\\/link>[\\s\\S]*?<pubDate>([^<]+)<\\/pubDate>/g)]\n    .filter(m => new Date(m[3]).getTime() >= Date.now() - 7 * 24 * 3600 * 1000)\n    .map(m => ({ titre: m[1], lien: m[2] }));\n} catch {}\nreturn [{ json: { sante, veille } }];\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "n-page",
+      "name": "Construire la page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Construit la page HTML. Tout ce qui vient de l'extérieur est échappé.\nconst ACCENT = '#c2255c';\nconst esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\nconst lien = u => /^https:\\/\\//.test(String(u)) ? esc(u) : '#';\nconst lire = n => { try { return $(n).first().json; } catch { return {}; } };\n\n// Anti DNS rebinding : la page ne répond qu'aux adresses locales attendues\nconst hoteHttp = String(lire('Ouvrir le tableau').headers?.host ?? '');\nif (!/^(localhost|127\\.0\\.0\\.1)(:\\d+)?$/.test(hoteHttp)) return [{ json: { code: 421, html: 'Hôte non autorisé.' } }];\n\nconst hote = lire(\"Décoder l'état de l'hôte\");\nconst wfs = (lire('Lister les workflows').data ?? []).filter(w => !w.name.startsWith('TEST'));\nconst exs = (lire('Dernières exécutions').data ?? []).filter(e => e.mode !== 'manual');\nconst surveillance = lire('Mémoire de la surveillance');\nconst direct = lire('Mesures en direct');\n\nconst maintenant = $now.setZone('Europe/Paris');\nconst ilYa24h = Date.now() - 24 * 3600 * 1000;\nconst heure = d => d ? DateTime.fromISO(d).setZone('Europe/Paris').toFormat(\"HH:mm\") : '—';\nconst jourHeure = d => {\n  if (!d) return '—';\n  const t = DateTime.fromISO(d).setZone('Europe/Paris');\n  return t.hasSame(maintenant, 'day') ? t.toFormat('HH:mm') : t.setLocale('fr').toFormat(\"d LLL HH:mm\");\n};\nconst duree = (a, b) => { if (!a || !b) return '—'; const s = (new Date(b) - new Date(a)) / 1000; return s < 60 ? s.toFixed(1).replace('.', ',') + ' s' : Math.round(s / 60) + ' min'; };\nconst depuis = d => { if (!d) return '—'; const s = (Date.now() - new Date(d)) / 1000; return s < 3600 ? Math.round(s / 60) + ' min' : s < 86400 ? Math.round(s / 3600) + ' h' : Math.round(s / 86400) + ' j'; };\n\n// --- Conteneurs : santé en direct + détails publiés par l'hôte\nconst NOMS = ['n8n', 'relais-telegram', 'cerveau', 'voix', 'studio'];\nconst conteneurs = NOMS.map(nom => {\n  const h = hote.etat?.services?.[nom] ?? {};\n  const sain = direct.sante?.[nom] !== false && !/unhealthy|exited|absent|dead/.test(h.etat ?? '');\n  return { nom, sain, memoire: (h.memoire ?? '').split('/')[0] || '—', depuis: depuis(h.depuis), redemarrages: h.redemarrages ?? 0 };\n});\nconst nbSains = conteneurs.filter(c => c.sain).length;\nconst erreurs = exs.filter(e => e.status === 'error' && new Date(e.startedAt).getTime() > ilYa24h);\nconst garde = hote.journal ?? [];\nconst incidentRecent = garde.find(l => /ALERTE/.test(l) && Date.now() - new Date(l.slice(0, 19).replace(' ', 'T')).getTime() < 24 * 3600 * 1000);\n\nlet titre, sousTitre, alerte = false;\nif (nbSains < 5) {\n  const enPanne = conteneurs.filter(c => !c.sain).map(c => c.nom).join(', ');\n  titre = `<span style=\"color:${ACCENT}\">${esc(enPanne)} en panne.</span>`; alerte = true;\n  sousTitre = 'Le chien de garde tente de réparer toutes les 5 minutes. Détails dans la section Système.';\n} else if (erreurs.length) {\n  titre = `<span style=\"color:${ACCENT}\">${erreurs.length} erreur${erreurs.length > 1 ? 's' : ''} sur 24 h.</span>`; alerte = true;\n  sousTitre = 'Les conteneurs sont sains, mais au moins un workflow a échoué. Détails avec /erreurs sur Telegram.';\n} else if (incidentRecent) {\n  titre = 'Tout fonctionne.';\n  sousTitre = 'Un incident a eu lieu dans les dernières 24 h, réparé automatiquement.';\n} else {\n  titre = 'Tout fonctionne.';\n  sousTitre = 'Tous les conteneurs sont sains et aucun workflow n’a échoué depuis 24 h.';\n}\n\n// --- Workflows\nconst actifs = wfs.filter(w => w.active).length;\nconst lignesWf = wfs.sort((a, b) => a.name.localeCompare(b.name)).map(w => {\n  const d = exs.find(e => e.workflowId === w.id);\n  const statut = !d ? '—' : d.status === 'success' ? 'réussie' : d.status === 'error' ? `<b style=\"color:${ACCENT}\">échec</b>` : esc(d.status);\n  return `<tr><td class=\"fort\">${esc(w.name)}</td><td>${w.active ? '<span class=\"point\"></span>actif' : '<span class=\"point gris\"></span>en pause'}</td><td class=\"mono\">${d ? jourHeure(d.startedAt) : '—'}</td><td>${statut}</td></tr>`;\n}).join('');\n\n// --- À venir (d'après les planifications connues)\nconst prochain = (heures, minutes = 0) => {\n  for (let j = 0; j < 2; j++) for (const h of heures) {\n    const t = maintenant.startOf('day').plus({ days: j, hours: h, minutes });\n    if (t > maintenant) return t;\n  }\n};\nconst envoyeAujourdhui = id => wfs.find(w => w.id === id)?.staticData?.global?.dernierEnvoi === maintenant.toISODate();\nlet quart = maintenant.startOf('hour').plus({ minutes: Math.floor(maintenant.minute / 15) * 15 + 15 });\nif (quart.hour < 8 || quart.hour > 21) quart = maintenant.startOf('day').plus({ days: maintenant.hour >= 8 ? 1 : 0, hours: 8 });\nconst planning = [\n  { t: quart, quoi: 'Mails : surveillance' },\n  { t: prochain([8, 13, 18]), quoi: 'Veille cyber' },\n  { t: prochain([21], 30), quoi: 'Sauvegarde' },\n  { t: envoyeAujourdhui('rapportQuotidien') ? maintenant.startOf('day').plus({ days: 1, hours: 7 }) : prochain([7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]), quoi: 'Rapport quotidien' },\n  { t: envoyeAujourdhui('podcastMatin0001') ? maintenant.startOf('day').plus({ days: 1, hours: 7, minutes: 5 }) : prochain([7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21], 5), quoi: 'Podcast du matin' },\n].filter(p => p.t).sort((a, b) => a.t - b.t)\n .map(p => `<li><span class=\"mono gris\">${p.t.hasSame(maintenant, 'day') ? p.t.toFormat('HH:mm') : 'demain ' + p.t.toFormat('HH:mm')}</span><span>${p.quoi}</span></li>`).join('');\n\n// --- À traiter : derniers mails signalés par la surveillance\nconst recents = surveillance.staticData?.global?.recents ?? [];\nconst aTraiter = recents.length\n  ? recents.slice(0, 6).map(r => `<li class=\"mail\"><div><div class=\"fort\">${esc(r.de)}</div><div>${esc(r.sujet)}</div><div class=\"mono gris petit\">${esc(String(r.compte).toLowerCase())}${r.ecole ? ' · école' : ''} · il y a ${depuis(new Date(r.date).toISOString())}</div></div><span class=\"gris petit\">répondre depuis Telegram</span></li>`).join('')\n  : '<li class=\"vide\">Aucun mail important signalé depuis 48 h.</li>';\n\n// --- Veille\nconst v = direct.veille ?? {};\nconst kev = v.kev ?? [];\nconst cert = v.certfr ?? [];\nconst lignesVeille = [\n  ...kev.slice(0, 5).map(k => `<li><span class=\"mono rose\">KEV</span><a href=\"${lien(k.lien)}\" rel=\"noopener noreferrer\" target=\"_blank\">${esc(k.id)} — ${esc(k.titre)}</a>${k.ransomware ? ' <span class=\"gris petit\">ransomware</span>' : ''}</li>`),\n  ...cert.slice(0, 3).map(c => `<li><span class=\"mono gris\">CERT</span><a href=\"${lien(c.lien)}\" rel=\"noopener noreferrer\" target=\"_blank\">${esc(c.titre)}</a></li>`),\n].join('') || '<li class=\"vide\">Rien de nouveau.</li>';\n\n// --- Infrastructure et système\nconst lignesInfra = conteneurs.map(c => `<li><span class=\"point${c.sain ? '' : ' rose-fond'}\"></span><span class=\"mono\" style=\"flex:1\">${c.nom}</span><span class=\"${c.sain ? 'gris' : 'rose fort'}\">${c.sain ? 'sain' : 'en panne'}</span></li>`).join('');\nconst lignesCont = conteneurs.map(c => `<tr><td class=\"mono\"><span class=\"point${c.sain ? '' : ' rose-fond'}\"></span>${c.nom}</td><td>${c.sain ? 'sain' : `<b style=\"color:${ACCENT}\">en panne</b>`}</td><td class=\"mono gris\">${esc(c.memoire)}</td><td class=\"gris\">${c.depuis}</td><td class=\"${c.redemarrages ? 'rose' : 'gris'}\">${c.redemarrages}</td></tr>`).join('');\nconst lignesGarde = garde.length ? garde.map(l => `<li><span class=\"mono gris\">${esc(l.slice(5, 16))}</span><span class=\"${/ALERTE/.test(l) ? 'rose' : ''}\">${esc(l.slice(20).replace(/^ALERTE : /, ''))}</span></li>`).join('') : '<li class=\"vide\">Aucun événement.</li>';\nconst NOMS_WF = Object.fromEntries(wfs.map(w => [w.id, w.name]));\nconst lignesExec = exs.slice(0, 15).map(e => `<tr><td class=\"mono gris\">${jourHeure(e.startedAt)}</td><td>${esc(NOMS_WF[e.workflowId] ?? e.workflowId)}</td><td class=\"gris\">${e.mode === 'trigger' ? 'planifié' : e.mode === 'webhook' ? 'Telegram' : e.mode === 'integrated' ? 'sous-workflow' : esc(e.mode)}</td><td class=\"mono gris\">${duree(e.startedAt, e.stoppedAt)}</td><td>${e.status === 'success' ? 'réussie' : `<b style=\"color:${ACCENT}\">${esc(e.status)}</b>`}</td></tr>`).join('');\nconst sauvegarde = hote.sauvegarde?.date ? jourHeure(hote.sauvegarde.date) : 'pas encore';\nconst majHote = hote.etat?.date ? depuis(hote.etat.date) : '—';\n\nconst html = `<!doctype html>\n<html lang=\"fr\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta http-equiv=\"refresh\" content=\"60\"><title>assistant.</title>\n<style>\n:root{--rose:${ACCENT};--texte:#1a1a1a;--gris:#6b6b6b;--ligne:#ececec}\n*{box-sizing:border-box}body{margin:0;background:#fff;color:var(--texte);font:15px/1.5 system-ui,-apple-system,'Segoe UI',Cantarell,Ubuntu,'Noto Sans',sans-serif}\na{color:var(--texte);text-decoration:none}a:hover{color:var(--rose)}\n.mono{font-family:ui-monospace,'DejaVu Sans Mono',Menlo,monospace;font-size:13px}.gris{color:var(--gris)}.rose{color:var(--rose)}.fort{font-weight:600}.petit{font-size:13px}\nheader{border-bottom:1px solid var(--ligne)}.barre{max-width:1200px;margin:0 auto;padding:0 24px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 36px;min-height:64px}\n.logo{font-weight:700;font-size:17px}.logo span{color:var(--rose)}nav{display:flex;flex-wrap:wrap;gap:4px 24px;flex:1 1 auto;font-size:14px}nav a{color:var(--gris);padding:20px 0 18px}nav a:first-child{color:var(--texte);border-bottom:2px solid var(--rose)}\nmain{max-width:1200px;margin:0 auto;padding:48px 24px 64px;display:flex;flex-direction:column;gap:56px}\n.etat{display:flex;flex-wrap:wrap;gap:24px 56px;align-items:flex-end}.etat>div{flex:1 1 480px}h1{margin:0;font-size:38px;line-height:1.15;font-weight:700;letter-spacing:-.3px}.sous{margin:12px 0 0;font-size:17px;color:#4a4a4a;max-width:620px}\n.chiffres{display:flex;flex-wrap:wrap;gap:32px;margin:0}.chiffres dt{font-size:13px;color:var(--gris)}.chiffres dd{margin:0;font-size:28px;font-weight:700}.chiffres dd small{color:#9a9a9a;font-size:28px;font-weight:700}\n.rangee{display:flex;flex-wrap:wrap;gap:48px 64px}.rangee>section{flex:1 1 360px;min-width:0}\nh2{margin:0;font-size:17px;font-weight:700;border-bottom:1px solid var(--texte);padding-bottom:10px}\nul,ol{list-style:none;margin:0;padding:0}li{display:flex;gap:18px;padding:11px 0;border-bottom:1px solid var(--ligne)}li>span:first-child.mono{min-width:96px}\nli.mail{justify-content:space-between;flex-wrap:wrap;align-items:center}.vide{color:var(--gris)}\ntable{width:100%;border-collapse:collapse}th{text-align:left;font-size:12px;font-weight:500;color:var(--gris);padding:12px 16px 8px 0;border-bottom:1px solid var(--ligne)}td{padding:11px 16px 11px 0;border-bottom:1px solid var(--ligne)}\n.defile{overflow-x:auto}.defile table{min-width:620px}\n.point{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--texte);margin-right:10px;vertical-align:1px}.point.gris{background:#bdbdbd}.point.rose-fond{background:var(--rose)}\nfooter{display:flex;flex-wrap:wrap;gap:8px 24px;font-size:13px;color:var(--gris);border-top:1px solid var(--ligne);padding-top:18px}\n</style></head><body>\n<header><div class=\"barre\"><a class=\"logo\" href=\"#\">assistant<span>.</span></a>\n<nav aria-label=\"Sections\"><a href=\"#\">Vue d'ensemble</a><a href=\"#a-traiter\">À traiter</a><a href=\"#workflows\">Workflows</a><a href=\"#veille\">Veille</a><a href=\"#systeme\">Système</a></nav>\n<span class=\"mono gris\">${maintenant.toFormat('HH:mm')} · actualisation auto 60 s</span></div></header>\n<main>\n<section class=\"etat\" aria-labelledby=\"t-etat\"><div>\n<p class=\"mono gris\" style=\"margin:0 0 10px\">${esc(maintenant.setLocale('fr').toFormat('cccc d LLLL · HH:mm'))}</p>\n<h1 id=\"t-etat\">${titre}</h1><p class=\"sous\">${esc(sousTitre)}</p></div>\n<dl class=\"chiffres\"><div><dt>Conteneurs</dt><dd>${nbSains}<small>/5</small></dd></div><div><dt>Workflows actifs</dt><dd>${actifs}<small>/${wfs.length}</small></dd></div><div><dt>Erreurs 24 h</dt><dd${erreurs.length ? ` style=\"color:${ACCENT}\"` : ''}>${erreurs.length}</dd></div></dl>\n</section>\n<div class=\"rangee\">\n<section id=\"a-traiter\" aria-labelledby=\"t-mails\" style=\"flex-basis:520px\"><h2 id=\"t-mails\">À traiter <span class=\"mono rose\">${recents.length || ''}</span></h2><ul>${aTraiter}</ul></section>\n<section aria-labelledby=\"t-venir\"><h2 id=\"t-venir\">À venir</h2><ul>${planning}</ul></section>\n</div>\n<section id=\"workflows\" aria-labelledby=\"t-wf\"><h2 id=\"t-wf\">Workflows</h2><div class=\"defile\"><table>\n<thead><tr><th>Nom</th><th>État</th><th>Dernière exécution</th><th>Résultat</th></tr></thead><tbody>${lignesWf}</tbody></table></div></section>\n<div class=\"rangee\">\n<section id=\"veille\" aria-labelledby=\"t-veille\" style=\"flex-basis:520px\"><h2 id=\"t-veille\">Veille <span class=\"gris\" style=\"font-weight:400;font-size:14px\">· ${v.kev ? kev.length + ' exploitée' + (kev.length > 1 ? 's' : '') + ' (48 h)' : 'KEV indisponible'} · ${v.certfr ? cert.length + ' alerte' + (cert.length > 1 ? 's' : '') + ' CERT-FR (7 j)' : 'CERT-FR indisponible'}</span></h2><ul>${lignesVeille}</ul></section>\n<section aria-labelledby=\"t-infra\"><h2 id=\"t-infra\">Infrastructure</h2><ul>${lignesInfra}\n<li><span style=\"flex:1\">Sauvegarde</span><span class=\"mono gris\">${sauvegarde}</span></li>\n<li><span style=\"flex:1\">Chien de garde</span><span class=\"mono gris\">il y a ${majHote}</span></li></ul></section>\n</div>\n<section id=\"systeme\" aria-labelledby=\"t-sys\"><h2 id=\"t-sys\">Système</h2><div class=\"defile\"><table>\n<thead><tr><th>Conteneur</th><th>Santé</th><th>Mémoire</th><th>Démarré il y a</th><th>Redémarrages</th></tr></thead><tbody>${lignesCont}</tbody></table></div></section>\n<div class=\"rangee\">\n<section aria-labelledby=\"t-garde\"><h2 id=\"t-garde\">Journal du chien de garde</h2><ol>${lignesGarde}</ol></section>\n<section aria-labelledby=\"t-exec\" style=\"flex-basis:560px\"><h2 id=\"t-exec\">Exécutions récentes</h2><div class=\"defile\"><table>\n<thead><tr><th>Heure</th><th>Workflow</th><th>Déclencheur</th><th>Durée</th><th>Statut</th></tr></thead><tbody>${lignesExec}</tbody></table></div></section>\n</div>\n<footer><span>Lecture seule. Les actions passent par Telegram. Accessible uniquement depuis cette machine ou par tunnel SSH.</span><span class=\"mono\" style=\"margin-left:auto\">état de l'hôte mis à jour il y a ${majHote}</span></footer>\n</main></body></html>`;\nreturn [{ json: { code: 200, html } }];\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "n-repondre",
+      "name": "Répondre",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": "={{ $json.code }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Content-Security-Policy",
+                "value": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+              },
+              {
+                "name": "X-Content-Type-Options",
+                "value": "nosniff"
+              },
+              {
+                "name": "Referrer-Policy",
+                "value": "no-referrer"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "n-note",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -260
+      ],
+      "parameters": {
+        "width": 900,
+        "height": 220,
+        "content": "## Tableau de bord\nhttp://localhost:5678/webhook/tableau (identifiant et mot de passe dans `tableau.env`).\n\n**Lecture seule.** Sources : fichiers publiés par l'hôte (montés en lecture seule), API n8n, santé des services, veille publique.\nProtections : authentification, refus des Host inattendus (DNS rebinding), échappement HTML, en-têtes CSP stricts."
+      }
+    }
+  ],
+  "connections": {
+    "Ouvrir le tableau": {
+      "main": [
+        [
+          {
+            "node": "Lire l'état de l'hôte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire l'état de l'hôte": {
+      "main": [
+        [
+          {
+            "node": "Décoder l'état de l'hôte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Décoder l'état de l'hôte": {
+      "main": [
+        [
+          {
+            "node": "Lister les workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lister les workflows": {
+      "main": [
+        [
+          {
+            "node": "Dernières exécutions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dernières exécutions": {
+      "main": [
+        [
+          {
+            "node": "Mémoire de la surveillance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mémoire de la surveillance": {
+      "main": [
+        [
+          {
+            "node": "Mesures en direct",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mesures en direct": {
+      "main": [
+        [
+          {
+            "node": "Construire la page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construire la page": {
+      "main": [
+        [
+          {
+            "node": "Répondre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "errorWorkflow": "alertePanne00001",
+    "saveDataSuccessExecution": "none"
+  },
+  "active": false
+}
