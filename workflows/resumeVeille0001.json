@@ -1,0 +1,177 @@
+{
+  "id": "resumeVeille0001",
+  "name": "Résumé CVE",
+  "nodes": [
+    {
+      "id": "n-trig",
+      "name": "Appelé par le tableau",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "n-collect",
+      "name": "Collecter les données",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Rassemble les données publiques sur une CVE (aucune donnée perso).\nconst e = $input.first().json;\nconst cve = String(e.cve ?? '').toUpperCase();\nif (!/^CVE-\\d{4}-\\d{4,7}$/.test(cve)) return [{ json: { erreur: 'Identifiant CVE invalide.' } }];\n\n// Cache : on ne régénère pas un résumé de moins de 7 jours\nconst mem = $getWorkflowStaticData('global');\nmem.resumes ??= {};\nfor (const [k, v] of Object.entries(mem.resumes)) if (Date.now() - v.date > 30 * 24 * 3600 * 1000) delete mem.resumes[k];\nif (mem.resumes[cve] && Date.now() - mem.resumes[cve].date < 7 * 24 * 3600 * 1000) {\n  return [{ json: { cve, cached: true } }];\n}\n\nconst essayer = async (f) => { try { return await f(); } catch { return null; } };\n// NVD : description, CVSS, CWE, références\nconst nvd = await essayer(() => this.helpers.httpRequest({ url: 'https://services.nvd.nist.gov/rest/json/cves/2.0', qs: { cveId: cve }, json: true, timeout: 20000 }));\nconst v = nvd?.vulnerabilities?.[0]?.cve;\nconst metrics = v?.metrics ?? {};\nconst mk = ['cvssMetricV40', 'cvssMetricV31', 'cvssMetricV30'].find(k => metrics[k]?.[0]);\nconst cvss = mk ? metrics[mk][0].cvssData : null;\nconst desc = v?.descriptions?.find(d => d.lang === 'en')?.value ?? '(description NVD indisponible)';\nconst cwe = [...new Set((v?.weaknesses ?? []).flatMap(w => (w.description ?? []).map(d => d.value)).filter(x => x && x !== 'NVP-Other'))];\nconst refs = (v?.references ?? []).map(r => r.url);\n\n// EPSS : probabilité d'exploitation\nconst epssData = await essayer(() => this.helpers.httpRequest({ url: 'https://api.first.org/data/v1/epss', qs: { cve }, json: true, timeout: 15000 }));\nconst epss = epssData?.data?.[0];\n\n// Dépôts publics nommés d'après la CVE (signal d'existence d'un PoC — jamais exécuté)\nconst gh = await essayer(() => this.helpers.httpRequest({ url: 'https://api.github.com/search/repositories', qs: { q: cve, per_page: 5, sort: 'stars' },\n  headers: { 'User-Agent': 'assistant-veille', Accept: 'application/vnd.github+json' }, json: true, timeout: 15000 }));\nconst depots = (gh?.items ?? []).map(r => `${r.full_name} (${r.stargazers_count} étoiles)`);\n\nconst contexte = [\n  `CVE : ${cve}`,\n  `Description (NVD) : ${desc}`,\n  cvss ? `CVSS : ${cvss.baseScore} (${cvss.baseSeverity}) — ${cvss.vectorString}` : 'CVSS : non disponible',\n  cwe.length ? `Type de faiblesse (CWE) : ${cwe.join('; ')}` : '',\n  epss ? `EPSS : ${(parseFloat(epss.epss) * 100).toFixed(1)}% de probabilité d'exploitation (percentile ${(parseFloat(epss.percentile) * 100).toFixed(0)})` : 'EPSS : non disponible',\n  `Exploitation active confirmée (CISA KEV) : ${e.kev ? 'OUI' : 'non recensée'}`,\n  `Dépôts publics repérés au nom de la CVE : ${depots.length ? depots.join(', ') : 'aucun'}`,\n  refs.length ? `Références : ${refs.slice(0, 6).join(' | ')}` : '',\n].filter(Boolean).join('\\n');\n\nreturn [{ json: { cve, cached: false, contexte,\n  signaux: { cvss: cvss?.baseScore ?? null, epss: epss ? Math.round(parseFloat(epss.epss) * 100) : null, kev: !!e.kev, depots: depots.length } } }];\n"
+      }
+    },
+    {
+      "id": "n-sw",
+      "name": "Déjà en cache ?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.cached ? 1 : 0 }}"
+      }
+    },
+    {
+      "id": "n-cerveau",
+      "name": "Rédiger (cerveau)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        -120
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://cerveau:8080/demander",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ question: $json.contexte ?? '-', consigne: \"Tu es analyste en cybers\\u00e9curit\\u00e9. \\u00c0 partir UNIQUEMENT des donn\\u00e9es fournies (description NVD, CVSS, CWE, EPSS, pr\\u00e9sence dans CISA KEV, d\\u00e9p\\u00f4ts publics rep\\u00e9r\\u00e9s, r\\u00e9f\\u00e9rences), tu r\\u00e9diges une fiche de synth\\u00e8se sur une vuln\\u00e9rabilit\\u00e9, pour un analyste en cybers\\u00e9curit\\u00e9. Objectif : qu'il comprenne la faille sans lire toute la documentation.\\n\\nStructure (en texte brut, sans Markdown, titres en MAJUSCULES) :\\nEN BREF : 2 ou 3 phrases.\\nPRODUITS ET VERSIONS : ce qui est touch\\u00e9.\\nM\\u00c9CANISME : le type de faille, le vecteur et pourquoi elle fonctionne, au niveau conceptuel, pour la compr\\u00e9hension. NE DONNE PAS de code d'exploitation ni d'encha\\u00eenement d'\\u00e9tapes op\\u00e9rationnelles pour mener l'attaque.\\nGRAVIT\\u00c9 R\\u00c9ELLE : interpr\\u00e8te le CVSS, l'EPSS, l'exploitation active et les d\\u00e9p\\u00f4ts rep\\u00e9r\\u00e9s. Dis clairement si un code d'exploitation public semble exister D'APR\\u00c8S CES DONN\\u00c9ES, sans jamais l'affirmer si rien ne l'indique.\\nD\\u00c9TECTION SOC : journaux, artefacts et signes \\u00e0 surveiller pour rep\\u00e9rer une tentative ou une compromission.\\nCORRECTIF ET MITIGATION : version corrig\\u00e9e si connue, et contournements en attendant.\\n\\nR\\u00e8gles : n'invente AUCUNE information absente des donn\\u00e9es ; si une information manque, \\u00e9cris-le simplement. Reste factuel, concis mais complet. Fran\\u00e7ais.\" }) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cerveauSecret001",
+          "name": "Secret du cerveau"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n-mem",
+      "name": "Mémoriser la fiche",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -120
+      ],
+      "parameters": {
+        "jsCode": "// Mémorise la fiche (cache 7 jours) et la renvoie à l'appelant\nconst prep = $('Collecter les données').first().json;\nif (prep.erreur) return [{ json: prep }];\nconst r = $input.first().json;\nif (r.error || !r.reponse) return [{ json: { erreur: 'Le cerveau n\\'a pas pu rédiger : ' + String(r.error?.message ?? r.erreur ?? '').slice(0, 150) } }];\nconst mem = $getWorkflowStaticData('global');\nmem.resumes ??= {};\nmem.resumes[prep.cve] = { date: Date.now(), texte: r.reponse.trim(), signaux: prep.signaux };\nreturn [{ json: { cve: prep.cve, ok: true } }];\n"
+      }
+    },
+    {
+      "id": "n-cache",
+      "name": "Depuis le cache",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        120
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { cve: $('Collecter les données').first().json.cve, ok: true, cache: true } }];"
+      }
+    },
+    {
+      "id": "n-note",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -220
+      ],
+      "parameters": {
+        "width": 880,
+        "height": 180,
+        "content": "## Résumé CVE (à la demande)\nAppelé par le tableau de bord (bouton « Résumer »). Rassemble NVD, EPSS, CISA KEV et les dépôts publics repérés, puis le cerveau (Sonnet, sans outils) rédige une fiche défensive et pédagogique (sans code d'exploitation). Mise en cache 7 jours dans le staticData, lue par le tableau via l'API n8n."
+      }
+    }
+  ],
+  "connections": {
+    "Appelé par le tableau": {
+      "main": [
+        [
+          {
+            "node": "Collecter les données",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collecter les données": {
+      "main": [
+        [
+          {
+            "node": "Déjà en cache ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Déjà en cache ?": {
+      "main": [
+        [
+          {
+            "node": "Rédiger (cerveau)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Depuis le cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rédiger (cerveau)": {
+      "main": [
+        [
+          {
+            "node": "Mémoriser la fiche",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "errorWorkflow": "alertePanne00001",
+    "saveDataSuccessExecution": "none"
+  },
+  "active": false
+}
