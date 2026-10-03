@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Bloque tout commit contenant un secret (token, clé API, mot de passe...).
+# gitleaks tourne dans Docker, image figée par empreinte (protection supply chain).
+set -euo pipefail
+
+GITLEAKS="zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f" # v8.30.1
+REPO="$(git rev-parse --show-toplevel)"
+
+if ! docker run --rm --network none -v "$REPO:/repo" -e GIT_CONFIG_COUNT=1 \
+    -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo \
+    "$GITLEAKS" git --pre-commit --staged --redact --no-banner /repo; then
+  echo "❌ Commit bloqué : gitleaks a détecté un secret potentiel (voir ci-dessus)." >&2
+  exit 1
+fi

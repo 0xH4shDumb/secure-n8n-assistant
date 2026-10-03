@@ -1,0 +1,11 @@
+[Unit]
+Description=Sauvegarde quotidienne de l'assistant
+
+[Timer]
+OnCalendar=*-*-* 21:30
+# PC éteint à 21h30 ? La sauvegarde est faite au prochain démarrage.
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

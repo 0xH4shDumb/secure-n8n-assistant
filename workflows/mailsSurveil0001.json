@@ -1,0 +1,513 @@
+{
+  "id": "mailsSurveil0001",
+  "name": "Mails : surveillance",
+  "nodes": [
+    {
+      "id": "n-trigger",
+      "name": "Toutes les 15 min (8h-21h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 8-21 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n-manuel",
+      "name": "Tester maintenant",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        500
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "n-liste-P",
+      "name": "Mails – Compte1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "is:unread newer_than:2d -in:chats ((is:important -category:promotions -category:social -category:forums) OR to:school.example OR from:school.example OR cc:school.example)"
+            },
+            {
+              "name": "maxResults",
+              "value": "10"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoPerso00000001",
+          "name": "Google RO – Compte1"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-ids-P",
+      "name": "Un élément par mail – Compte1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Un élément par mail ; un élément vide s'il n'y en a pas (pour continuer vers le compte suivant)\nconst r = $input.first().json;\nif (r.error || !r.messages?.length) return [{ json: { id: null } }];\nreturn r.messages.map(m => ({ json: { id: m.id } }));\n"
+      }
+    },
+    {
+      "id": "n-det-P",
+      "name": "Détails – Compte1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.id ? 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + $json.id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=To&metadataHeaders=Cc' : 'https://gmail.googleapis.com/gmail/v1/users/me/profile' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoPerso00000001",
+          "name": "Google RO – Compte1"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n-liste-C",
+      "name": "Mails – Compte2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "is:unread newer_than:2d -in:chats ((is:important -category:promotions -category:social -category:forums) OR to:school.example OR from:school.example OR cc:school.example)"
+            },
+            {
+              "name": "maxResults",
+              "value": "10"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoCyber00000001",
+          "name": "Google RO – Compte2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-ids-C",
+      "name": "Un élément par mail – Compte2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Un élément par mail ; un élément vide s'il n'y en a pas (pour continuer vers le compte suivant)\nconst r = $input.first().json;\nif (r.error || !r.messages?.length) return [{ json: { id: null } }];\nreturn r.messages.map(m => ({ json: { id: m.id } }));\n"
+      }
+    },
+    {
+      "id": "n-det-C",
+      "name": "Détails – Compte2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.id ? 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + $json.id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=To&metadataHeaders=Cc' : 'https://gmail.googleapis.com/gmail/v1/users/me/profile' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoCyber00000001",
+          "name": "Google RO – Compte2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n-liste-J",
+      "name": "Mails – Compte3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        500
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "is:unread newer_than:2d -in:chats ((is:important -category:promotions -category:social -category:forums) OR to:school.example OR from:school.example OR cc:school.example)"
+            },
+            {
+              "name": "maxResults",
+              "value": "10"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoJeux000000001",
+          "name": "Google RO – Compte3"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-ids-J",
+      "name": "Un élément par mail – Compte3",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        500
+      ],
+      "parameters": {
+        "jsCode": "// Un élément par mail ; un élément vide s'il n'y en a pas (pour continuer vers le compte suivant)\nconst r = $input.first().json;\nif (r.error || !r.messages?.length) return [{ json: { id: null } }];\nreturn r.messages.map(m => ({ json: { id: m.id } }));\n"
+      }
+    },
+    {
+      "id": "n-det-J",
+      "name": "Détails – Compte3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        500
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.id ? 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + $json.id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=To&metadataHeaders=Cc' : 'https://gmail.googleapis.com/gmail/v1/users/me/profile' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoJeux000000001",
+          "name": "Google RO – Compte3"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n-nouveaux",
+      "name": "Nouveaux mails ?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Repère les mails jamais signalés et prépare une notification avec boutons pour chacun.\nconst COMPTES = { P: 'Compte1', C: 'Compte2', J: 'Compte3' };\nconst MAX_NOTIFS = 5;\nconst esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst court = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);\nconst masquer = s => String(s).replace(/\\d[\\d -]{2,}\\d/g, m => (m.replace(/\\D/g, '').length >= 4 ? '••••' : m));\nconst expediteur = from => (from.match(/^\\s*\"?([^\"<]+?)\"?\\s*</)?.[1] ?? from).trim();\nconst lire = nom => { try { return $(nom).all().map(i => i.json); } catch { return []; } };\n\nconst mem = $getWorkflowStaticData('global');\nmem.vus ??= {};\nconst premiereFois = !mem.init;\nconst maintenant = Date.now();\n\nconst nouveaux = [];\nfor (const [code, nom] of Object.entries(COMPTES)) {\n  for (const m of lire(`Détails – ${nom}`)) {\n    if (!m.payload || !m.id || mem.vus[m.id]) continue;\n    mem.vus[m.id] = maintenant;\n    const h = n => m.payload.headers?.find(x => x.name.toLowerCase() === n)?.value ?? '';\n    nouveaux.push({ code, nom, id: m.id, de: expediteur(h('from')), sujet: h('subject') || '(sans sujet)',\n                    apercu: m.snippet ?? '', ecole: /school\\.example/i.test(h('from') + h('to') + h('cc')) });\n  }\n}\nfor (const [id, t] of Object.entries(mem.vus)) if (maintenant - t > 7 * 24 * 3600 * 1000) delete mem.vus[id];\n\n// Première exécution : on mémorise l'existant sans rien signaler (pas d'avalanche de notifications)\nif (premiereFois) {\n  mem.init = true;\n  return [{ json: { texte: `📬 <b>Surveillance des mails activée</b>\\nJe te préviendrai des prochains mails importants (${nouveaux.length} déjà présents ignorés).` } }];\n}\n\nconst sorties = nouveaux.slice(0, MAX_NOTIFS).map(n => ({ json: {\n  texte: `📬 <b>Nouveau mail</b> — ${n.nom}${n.ecole ? ' · 🎓 École' : ''}\\n<b>De :</b> ${esc(court(n.de, 60))}\\n<b>Objet :</b> ${esc(court(masquer(n.sujet), 120))}\\n<i>${esc(court(masquer(n.apercu), 160))}</i>`,\n  boutons: [[{ texte: '✍️ Préparer une réponse', donnee: `rep:${n.code}:${n.id}` }, { texte: '🙈 Ignorer', donnee: `ign:${n.code}:${n.id}` }]],\n} }));\nif (nouveaux.length > MAX_NOTIFS) sorties.push({ json: { texte: `📬 … et ${nouveaux.length - MAX_NOTIFS} autre(s) mail(s) important(s). Détail avec /rapport.` } });\nreturn sorties;\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "n-notif",
+      "name": "Notifier (relais)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://relais-telegram:8081/message",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ texte: $json.texte, boutons: $json.boutons ?? null }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "relaisSecret0001",
+          "name": "Secret du relais Telegram"
+        }
+      }
+    },
+    {
+      "id": "n-note",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -160
+      ],
+      "parameters": {
+        "width": 900,
+        "height": 200,
+        "content": "## Mails : surveillance\nToutes les 15 min (8h-21h) : nouveaux mails importants ou École non lus des 3 comptes (accès **lecture seule**) → notification Telegram avec boutons **Préparer une réponse / Ignorer**.\nLe contenu des mails n'est PAS lu ici : seulement expéditeur, objet et aperçu (chiffres masqués)."
+      }
+    },
+    {
+      "id": "n-bot",
+      "name": "Appelé par le bot",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        700
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    }
+  ],
+  "connections": {
+    "Toutes les 15 min (8h-21h)": {
+      "main": [
+        [
+          {
+            "node": "Mails – Compte1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tester maintenant": {
+      "main": [
+        [
+          {
+            "node": "Mails – Compte1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mails – Compte1": {
+      "main": [
+        [
+          {
+            "node": "Un élément par mail – Compte1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Un élément par mail – Compte1": {
+      "main": [
+        [
+          {
+            "node": "Détails – Compte1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Détails – Compte1": {
+      "main": [
+        [
+          {
+            "node": "Mails – Compte2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mails – Compte2": {
+      "main": [
+        [
+          {
+            "node": "Un élément par mail – Compte2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Un élément par mail – Compte2": {
+      "main": [
+        [
+          {
+            "node": "Détails – Compte2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Détails – Compte2": {
+      "main": [
+        [
+          {
+            "node": "Mails – Compte3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mails – Compte3": {
+      "main": [
+        [
+          {
+            "node": "Un élément par mail – Compte3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Un élément par mail – Compte3": {
+      "main": [
+        [
+          {
+            "node": "Détails – Compte3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Détails – Compte3": {
+      "main": [
+        [
+          {
+            "node": "Nouveaux mails ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nouveaux mails ?": {
+      "main": [
+        [
+          {
+            "node": "Notifier (relais)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appelé par le bot": {
+      "main": [
+        [
+          {
+            "node": "Mails – Compte1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "errorWorkflow": "alertePanne00001"
+  },
+  "active": false
+}

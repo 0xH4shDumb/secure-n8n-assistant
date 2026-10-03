@@ -1,0 +1,480 @@
+{
+  "id": "veilleCyber00001",
+  "name": "Veille cyber",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8,13,18 * * *"
+            }
+          ]
+        }
+      },
+      "id": "n-trigger",
+      "name": "3 fois par jour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.cert.ssi.gouv.fr/alerte/feed/",
+        "options": {}
+      },
+      "id": "n-certfr",
+      "name": "Lire CERT-FR",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        272,
+        112
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "n-kev",
+      "name": "Lire CISA KEV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        272,
+        304
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pubStartDate",
+              "value": "={{ $now.minus({ days: 7 }).toUTC().toFormat(\"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'\") }}"
+            },
+            {
+              "name": "pubEndDate",
+              "value": "={{ $now.toUTC().toFormat(\"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'\") }}"
+            },
+            {
+              "name": "cvssV3Severity",
+              "value": "CRITICAL"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "n-nvd",
+      "name": "Lire NVD (critiques)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        272,
+        512
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Transforme chaque article du flux CERT-FR en un format commun aux 3 sources\nconst items = $input.all().filter(i => i.json.link || i.json.error);\nif (items[0]?.json.error) return [{ json: { source: 'CERT-FR', erreur: String(items[0].json.error.message ?? items[0].json.error) } }];\n\nreturn items.map(({ json: a }) => ({\n  json: {\n    source: 'CERT-FR',\n    id: a.link,\n    titre: a.title,\n    lien: a.link,\n    date: a.isoDate,\n    detail: a.contentSnippet ?? '',\n  },\n}));\n"
+      },
+      "id": "n-norm-certfr",
+      "name": "Normaliser CERT-FR",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        112
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Catalogue CISA KEV : vulnérabilités dont l'exploitation est CONFIRMÉE\nconst data = $input.first().json;\nif (data.error) return [{ json: { source: 'KEV', erreur: String(data.error.message ?? data.error) } }];\n\nreturn (data.vulnerabilities ?? []).map(v => ({\n  json: {\n    source: 'KEV',\n    id: 'KEV:' + v.cveID, // préfixe : une CVE déjà vue côté NVD doit ré-alerter si elle devient exploitée\n    cve: v.cveID,\n    titre: `${v.cveID} — ${v.vendorProject} ${v.product}`,\n    lien: `https://nvd.nist.gov/vuln/detail/${v.cveID}`,\n    date: v.dateAdded,\n    detail: v.shortDescription,\n    ransomware: v.knownRansomwareCampaignUse === 'Known',\n  },\n}));\n"
+      },
+      "id": "n-norm-kev",
+      "name": "Normaliser KEV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        304
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// NVD : CVE publiées récemment avec une sévérité CRITIQUE\nconst data = $input.first().json;\nif (data.error) return [{ json: { source: 'NVD', erreur: String(data.error.message ?? data.error) } }];\n\n// Score CVSS v3 en priorité : c'est celui que NVD utilise pour le filtre CRITICAL\nfunction score(metrics = {}) {\n  for (const k of ['cvssMetricV31', 'cvssMetricV30', 'cvssMetricV40']) {\n    const s = metrics[k]?.[0]?.cvssData?.baseScore;\n    if (s !== undefined) return s;\n  }\n  return null;\n}\n\nreturn (data.vulnerabilities ?? []).map(({ cve }) => ({\n  json: {\n    source: 'NVD',\n    id: cve.id,\n    cve: cve.id,\n    titre: cve.id,\n    score: score(cve.metrics),\n    lien: `https://nvd.nist.gov/vuln/detail/${cve.id}`,\n    date: cve.published + 'Z', // NVD donne l'heure UTC sans le préciser\n    detail: cve.descriptions?.find(d => d.lang === 'en')?.value ?? '',\n  },\n}));\n"
+      },
+      "id": "n-norm-nvd",
+      "name": "Normaliser NVD",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        512
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "id": "n-merge",
+      "name": "Regrouper",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        784,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Ne garde que ce qui est récent ET jamais envoyé.\n// La mémoire des éléments déjà vus est conservée entre deux exécutions\n// AUTOMATIQUES (pas lors des tests manuels, qui renvoient donc tout).\nconst JOUR = 24 * 3600 * 1000;\nconst FENETRE = 7 * JOUR;   // tolère un PC éteint jusqu'à 7 jours\nconst OUBLI = 30 * JOUR;    // au-delà, on purge la mémoire\n\nconst memoire = $getWorkflowStaticData('global');\nmemoire.vus ??= {};\nconst maintenant = Date.now();\n\nconst erreurs = [];\nconst nouveaux = [];\nfor (const { json: a } of $input.all()) {\n  if (a.erreur) { erreurs.push(a); continue; }\n  if (!a.id) continue; // élément vide (source sans résultat)\n  const age = maintenant - new Date(a.date).getTime();\n  if (!(age <= FENETRE)) continue;\n  if (memoire.vus[a.id]) continue;\n  memoire.vus[a.id] = maintenant;\n  nouveaux.push(a);\n}\n\nfor (const [id, t] of Object.entries(memoire.vus)) {\n  if (maintenant - t > OUBLI) delete memoire.vus[id];\n}\n\nif (nouveaux.length === 0 && erreurs.length === 0) return []; // rien à dire : pas de message\nreturn [{ json: { nouveaux, erreurs } }];\n"
+      },
+      "id": "n-filtre",
+      "name": "Récent et jamais envoyé",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construit le(s) message(s) Telegram en HTML (limite Telegram : 4096 caractères)\nconst { nouveaux, erreurs } = $input.first().json;\n\nconst esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst court = (s, n = 220) => (s.length > n ? s.slice(0, n - 1) + '…' : s);\n\nconst kev = nouveaux.filter(a => a.source === 'KEV');\nconst certfr = nouveaux.filter(a => a.source === 'CERT-FR');\n// Une CVE présente dans KEV et NVD n'apparaît qu'une fois, dans KEV (plus grave)\nconst cveKev = new Set(kev.map(a => a.cve));\nconst nvd = nouveaux\n  .filter(a => a.source === 'NVD' && !cveKev.has(a.cve))\n  .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));\n\nconst lignes = [];\nconst heure = $now.setZone('Europe/Paris').toFormat(\"dd/MM/yyyy 'à' HH'h'mm\");\nlignes.push(`🛡️ <b>Veille cyber</b> — ${heure}`);\n\nfunction section(titre, liste, ligne) {\n  if (!liste.length) return;\n  lignes.push('', `<b>${titre} (${liste.length})</b>`);\n  for (const a of liste) lignes.push(ligne(a));\n}\n\nsection('🔴 Exploitées activement — CISA KEV', kev, a =>\n  `• <a href=\"${esc(a.lien)}\">${esc(a.titre)}</a>${a.ransomware ? ' 💀 <i>ransomware</i>' : ''}\\n  ${esc(court(a.detail))}`);\nsection('🇫🇷 Alertes CERT-FR', certfr, a =>\n  `• <a href=\"${esc(a.lien)}\">${esc(a.titre)}</a>`);\nsection('🟠 CVE critiques — NVD', nvd, a =>\n  `• <a href=\"${esc(a.lien)}\">${esc(a.titre)}</a> <b>CVSS ${a.score ?? '?'}</b>\\n  ${esc(court(a.detail, 160))}`);\n\nfor (const e of erreurs) lignes.push('', `⚠️ Source <b>${esc(e.source)}</b> indisponible : ${esc(court(e.erreur, 150))}`);\n\n// Découpage en plusieurs messages si nécessaire, sans couper une ligne\nconst messages = [];\nlet courant = '';\nfor (const l of lignes) {\n  if (courant.length + l.length + 1 > 4000) { messages.push(courant); courant = ''; }\n  courant += (courant ? '\\n' : '') + l;\n}\nif (courant) messages.push(courant);\n\nreturn messages.map(texte => ({ json: { texte } }));\n"
+      },
+      "id": "n-format",
+      "name": "Mettre en forme",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.texte }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "n-telegram",
+      "name": "Envoyer sur Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1504,
+        304
+      ],
+      "webhookId": "73ca87a2-6ede-4c69-8307-0f50dfe5360e",
+      "credentials": {
+        "telegramApi": {
+          "id": "J7Ipuv10Sqwp4CWV",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Veille cyber\n1. **Collecte** : CERT-FR (alertes), CISA KEV (vulnérabilités exploitées), NVD (CVE critiques)\n2. **Normalisation** : les 3 sources sont converties au même format\n3. **Filtre** : 7 derniers jours + jamais envoyé (mémoire entre exécutions automatiques)\n4. **Envoi** : digest HTML sur Telegram, rien si aucune nouveauté\n\nTest manuel = tout est renvoyé (la mémoire ne s'applique qu'en mode actif).",
+        "height": 220,
+        "width": 760
+      },
+      "id": "n-note",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        -160
+      ]
+    },
+    {
+      "id": "n-bot",
+      "name": "Appelé par le bot",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "position": [
+        0,
+        700
+      ]
+    },
+    {
+      "id": "n-fmt-discord",
+      "name": "Mettre en forme (Discord)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        554
+      ],
+      "parameters": {
+        "jsCode": "// Mise en forme Discord (Markdown, 2000 caractères max par message).\n// Les erreurs internes (sources indisponibles) restent sur Telegram : elles ne concernent pas le salon.\nconst { nouveaux } = $input.first().json;\nif (!nouveaux?.length) return [];\n\n// Neutralise le Markdown Discord et les mentions (@everyone...) dans les textes venus de l'extérieur\nconst net = s => String(s ?? '').replace(/([\\\\*_~`|>\\[\\]()])/g, '\\\\$1').replace(/@/g, '@\\u200b');\nconst court = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);\n\nconst kev = nouveaux.filter(a => a.source === 'KEV');\nconst certfr = nouveaux.filter(a => a.source === 'CERT-FR');\nconst cveKev = new Set(kev.map(a => a.cve));\nconst nvd = nouveaux.filter(a => a.source === 'NVD' && !cveKev.has(a.cve)).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));\n\nconst L = [`## 🛡️ Veille cyber — ${$now.setZone('Europe/Paris').toFormat(\"dd/MM/yyyy 'à' HH'h'mm\")}`];\nconst section = (titre, liste, ligne) => {\n  if (!liste.length) return;\n  L.push('', `**${titre} (${liste.length})**`);\n  for (const a of liste) L.push(ligne(a));\n};\nsection('🔴 Exploitées activement — CISA KEV', kev, a =>\n  `- [${net(a.titre)}](<${a.lien}>)${a.ransomware ? ' 💀 *ransomware*' : ''}\\n  ${net(court(a.detail, 200))}`);\nsection('🇫🇷 Alertes CERT-FR', certfr, a => `- [${net(a.titre)}](<${a.lien}>)`);\nsection('🟠 CVE critiques — NVD', nvd, a =>\n  `- [${net(a.titre)}](<${a.lien}>) **CVSS ${a.score ?? '?'}**\\n  ${net(court(a.detail, 150))}`);\n\n// Découpage à 1900 caractères, sans couper une ligne\nconst messages = [];\nlet courant = '';\nfor (const l of L) {\n  if (courant.length + l.length + 1 > 1900) { messages.push(courant); courant = ''; }\n  courant += (courant ? '\\n' : '') + l;\n}\nif (courant) messages.push(courant);\nreturn messages.map(texte => ({ json: { texte } }));\n"
+      }
+    },
+    {
+      "id": "n-discord",
+      "name": "Publier sur Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        554
+      ],
+      "parameters": {
+        "authentication": "webhook",
+        "operation": "sendLegacy",
+        "content": "={{ $json.texte }}",
+        "options": {
+          "flags": [
+            "SUPPRESS_EMBEDS"
+          ]
+        }
+      },
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "9ECpGJrZmbZ5xtQs",
+          "name": "Discord veille"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n-echec-discord",
+      "name": "Échec Discord ?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1744,
+        554
+      ],
+      "parameters": {
+        "jsCode": "// Si Discord a refusé la publication, on le signale sur Telegram (la veille y est déjà partie)\nconst e = $input.all().find(i => i.json.error)?.json.error;\nif (!e) return [];\nreturn [{ json: { texte: `⚠️ Veille : publication Discord échouée (${String(e.message ?? e).slice(0, 150).replace(/[<>&]/g, '')})` } }];"
+      }
+    }
+  ],
+  "connections": {
+    "3 fois par jour": {
+      "main": [
+        [
+          {
+            "node": "Lire CERT-FR",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Lire CISA KEV",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Lire NVD (critiques)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire CERT-FR": {
+      "main": [
+        [
+          {
+            "node": "Normaliser CERT-FR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire CISA KEV": {
+      "main": [
+        [
+          {
+            "node": "Normaliser KEV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire NVD (critiques)": {
+      "main": [
+        [
+          {
+            "node": "Normaliser NVD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normaliser CERT-FR": {
+      "main": [
+        [
+          {
+            "node": "Regrouper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normaliser KEV": {
+      "main": [
+        [
+          {
+            "node": "Regrouper",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Normaliser NVD": {
+      "main": [
+        [
+          {
+            "node": "Regrouper",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Regrouper": {
+      "main": [
+        [
+          {
+            "node": "Récent et jamais envoyé",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Récent et jamais envoyé": {
+      "main": [
+        [
+          {
+            "node": "Mettre en forme",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Mettre en forme (Discord)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mettre en forme": {
+      "main": [
+        [
+          {
+            "node": "Envoyer sur Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appelé par le bot": {
+      "main": [
+        [
+          {
+            "node": "Lire CERT-FR",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Lire CISA KEV",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Lire NVD (critiques)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mettre en forme (Discord)": {
+      "main": [
+        [
+          {
+            "node": "Publier sur Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publier sur Discord": {
+      "main": [
+        [
+          {
+            "node": "Échec Discord ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Échec Discord ?": {
+      "main": [
+        [
+          {
+            "node": "Envoyer sur Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "binaryMode": "separate",
+    "errorWorkflow": "alertePanne00001"
+  },
+  "active": false
+}

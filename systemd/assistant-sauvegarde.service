@@ -1,0 +1,7 @@
+[Unit]
+Description=Sauvegarde de l'assistant (workflows n8n -> Git, identifiants chiffrés -> local)
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/secure-n8n-assistant/sauvegarde.sh

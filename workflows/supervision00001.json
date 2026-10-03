@@ -1,0 +1,397 @@
+{
+  "id": "supervision00001",
+  "name": "Supervision",
+  "nodes": [
+    {
+      "id": "n-bot",
+      "name": "Appelé par le bot",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "n-manuel",
+      "name": "Tester maintenant",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        500
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "n-comprendre",
+      "name": "Comprendre la commande",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Commandes de supervision. Liste BLANCHE : seuls ces workflows peuvent être mis en pause.\n// Le bot et l'alerte panne n'y figurent pas : on ne peut pas se couper soi-même l'accès.\nconst PILOTABLES = { veille: 'veilleCyber00001', rapport: 'rapportQuotidien', podcast: 'podcastMatin0001' };\nconst e = $input.first().json;\nconst commande = e.commande ?? 'statut';\nconst argument = String(e.argument ?? '').toLowerCase();\n\nif (commande === 'pause' || commande === 'reprendre') {\n  const id = PILOTABLES[argument];\n  if (!id) return [{ json: { sortie: 3, texte: `Usage : /${commande} veille | rapport | podcast` } }];\n  return [{ json: { sortie: 2, id, nom: argument, action: commande === 'pause' ? 'deactivate' : 'activate' } }];\n}\n// Appels internes du bot : « contexte » = statut + historique 24 h, « rien » = rien à fournir\nif (commande === 'rien') return [{ json: { sortie: 3, texte: '' } }];\nreturn [{ json: { sortie: commande === 'erreurs' ? 1 : 0, contexte: commande === 'contexte' } }];\n"
+      }
+    },
+    {
+      "id": "n-switch",
+      "name": "Aiguiller",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 4,
+        "output": "={{ $json.sortie }}"
+      }
+    },
+    {
+      "id": "n-sante",
+      "name": "Santé des conteneurs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Contrôle de santé des conteneurs (réponse attendue en moins de 5 s)\nconst SERVICES = {\n  cerveau: 'http://cerveau:8080/sante',\n  voix: 'http://voix:8080/sante',\n  studio: 'http://studio:8080/sante',\n  relais: 'http://relais-telegram:8081/sante',\n};\nconst etat = {};\nfor (const [nom, url] of Object.entries(SERVICES)) {\n  try {\n    await this.helpers.httpRequest({ url, timeout: 5000 });\n    etat[nom] = true;\n  } catch {\n    etat[nom] = false;\n  }\n}\nreturn [{ json: { conteneurs: etat } }];\n"
+      }
+    },
+    {
+      "id": "n-wfs",
+      "name": "Lister les workflows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:5678/api/v1/workflows?limit=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "n8nApi": {
+          "id": "OuTeRyvTuWSI1UQt",
+          "name": "API n8n (bot)"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-exs",
+      "name": "Dernières exécutions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:5678/api/v1/executions?limit=250",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "n8nApi": {
+          "id": "OuTeRyvTuWSI1UQt",
+          "name": "API n8n (bot)"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-statut",
+      "name": "Rédiger le statut",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst lire = nom => { try { return $(nom).first().json; } catch { return {}; } };\nconst heure = d => d ? DateTime.fromISO(d).setZone('Europe/Paris').toFormat(\"dd/MM HH'h'mm\") : '—';\n\nconst conteneurs = lire('Santé des conteneurs').conteneurs ?? {};\nconst wfs = lire('Lister les workflows');\nconst exs = lire('Dernières exécutions');\n\nconst L = [`🩺 <b>Statut</b> — ${$now.setZone('Europe/Paris').toFormat(\"dd/MM HH'h'mm\")}`, '', '<b>Conteneurs</b>'];\nL.push(Object.entries(conteneurs).map(([n, ok]) => `${ok ? '✅' : '❌'} ${n}`).join(' · ') + ' · ✅ n8n');\n\nL.push('', '<b>Workflows</b>');\nif (wfs.error) L.push('⚠️ API n8n injoignable : ' + esc(String(wfs.error.message ?? '').slice(0, 100)));\n// Les tests manuels (bouton « Execute ») ne sont pas des pannes : on les ignore\nconst executions = (exs.data ?? []).filter(e => e.mode !== 'manual');\nconst ilYa24h = Date.now() - 24 * 3600 * 1000;\nfor (const w of (wfs.data ?? []).filter(w => !w.name.startsWith('TEST')).sort((a, b) => a.name.localeCompare(b.name))) {\n  const ex = executions.filter(e => e.workflowId === w.id);\n  const derniere = ex[0];\n  const echecs = ex.filter(e => e.status === 'error' && new Date(e.startedAt).getTime() > ilYa24h).length;\n  const icone = !w.active ? '⏸️' : echecs ? '⚠️' : '✅';\n  const statutDerniere = derniere ? `${derniere.status === 'success' ? '✓' : derniere.status === 'error' ? '✗' : '…'} ${heure(derniere.startedAt)}` : 'aucune';\n  L.push(`${icone} ${esc(w.name)}${w.active ? '' : ' <i>(en pause)</i>'} — dernière : ${statutDerniere}${echecs ? ` — <b>${echecs} échec(s) en 24 h</b>` : ''}`);\n}\n\nconst total = executions.filter(e => e.status === 'error' && new Date(e.startedAt).getTime() > ilYa24h).length;\nL.push('', total ? `⚠️ <b>${total} erreur(s) en 24 h</b> : détails avec /erreurs` : '👌 Aucune erreur en 24 h');\n// Pour le bot : historique des dernières 24 h (une exécution n'implique pas forcément un envoi)\nif ($('Comprendre la commande').first().json.contexte) {\n  L.push('', 'Historique des exécutions automatiques (24 h) :');\n  const noms = Object.fromEntries((wfs.data ?? []).map(w => [w.id, w.name]));\n  for (const e of executions.filter(e => new Date(e.startedAt).getTime() > ilYa24h && e.mode === 'trigger').slice(0, 40))\n    L.push(`- ${heure(e.startedAt)} ${noms[e.workflowId] ?? e.workflowId} : ${e.status}`);\n}\nreturn [{ json: { texte: L.join('\\n') } }];\n"
+      }
+    },
+    {
+      "id": "n-noms",
+      "name": "Noms des workflows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        250
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:5678/api/v1/workflows?limit=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "n8nApi": {
+          "id": "OuTeRyvTuWSI1UQt",
+          "name": "API n8n (bot)"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-errs",
+      "name": "Lire les erreurs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        250
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:5678/api/v1/executions?status=error&limit=20&includeData=true",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "n8nApi": {
+          "id": "OuTeRyvTuWSI1UQt",
+          "name": "API n8n (bot)"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-erreurs",
+      "name": "Rédiger les erreurs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        250
+      ],
+      "parameters": {
+        "jsCode": "const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst r = $input.first().json;\nif (r.error) return [{ json: { texte: '⚠️ API n8n injoignable : ' + esc(String(r.error.message ?? '').slice(0, 100)) } }];\nconst noms = {};\ntry { for (const w of $('Noms des workflows').first().json.data ?? []) noms[w.id] = w.name; } catch {}\n// Les tests manuels ne sont pas des pannes : on les ignore\nconst liste = (r.data ?? []).filter(e => e.mode !== 'manual').slice(0, 5);\nif (!liste.length) return [{ json: { texte: '👌 Aucune erreur récente.' } }];\nconst L = ['🚨 <b>Dernières erreurs</b>'];\nfor (const e of liste) {\n  const res = e.data?.resultData ?? {};\n  const msg = res.error?.message ?? res.error?.description ?? 'erreur inconnue';\n  L.push('', `<b>${esc(noms[e.workflowId] ?? e.workflowId)}</b> — ${DateTime.fromISO(e.startedAt).setZone('Europe/Paris').toFormat(\"dd/MM HH'h'mm\")}`,\n         `Bloc : ${esc(res.lastNodeExecuted ?? '?')}`, `<i>${esc(String(msg).slice(0, 200))}</i>`);\n}\nreturn [{ json: { texte: L.join('\\n') } }];\n"
+      }
+    },
+    {
+      "id": "n-action",
+      "name": "Activer ou désactiver",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        500
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://127.0.0.1:5678/api/v1/workflows/' + $json.id + '/' + $json.action }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "n8nApi": {
+          "id": "OuTeRyvTuWSI1UQt",
+          "name": "API n8n (bot)"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-action-txt",
+      "name": "Rédiger la confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        500
+      ],
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst { nom, action } = $('Comprendre la commande').first().json;\nif (r.error) return [{ json: { texte: `⚠️ Impossible de modifier « ${nom} » : ${String(r.error.message ?? '').slice(0, 150)}` } }];\nreturn [{ json: { texte: action === 'deactivate'\n  ? `⏸️ <b>${nom}</b> est en pause. Reprends-le avec /reprendre ${nom}`\n  : `▶️ <b>${nom}</b> est de nouveau actif.` } }];\n"
+      }
+    },
+    {
+      "id": "n-usage",
+      "name": "Usage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        700
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { texte: $input.first().json.texte } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Appelé par le bot": {
+      "main": [
+        [
+          {
+            "node": "Comprendre la commande",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tester maintenant": {
+      "main": [
+        [
+          {
+            "node": "Comprendre la commande",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Comprendre la commande": {
+      "main": [
+        [
+          {
+            "node": "Aiguiller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aiguiller": {
+      "main": [
+        [
+          {
+            "node": "Santé des conteneurs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Noms des workflows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Activer ou désactiver",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Usage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Santé des conteneurs": {
+      "main": [
+        [
+          {
+            "node": "Lister les workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lister les workflows": {
+      "main": [
+        [
+          {
+            "node": "Dernières exécutions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dernières exécutions": {
+      "main": [
+        [
+          {
+            "node": "Rédiger le statut",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Noms des workflows": {
+      "main": [
+        [
+          {
+            "node": "Lire les erreurs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire les erreurs": {
+      "main": [
+        [
+          {
+            "node": "Rédiger les erreurs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activer ou désactiver": {
+      "main": [
+        [
+          {
+            "node": "Rédiger la confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "errorWorkflow": "alertePanne00001"
+  },
+  "active": false
+}

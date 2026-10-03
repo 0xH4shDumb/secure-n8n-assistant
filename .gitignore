@@ -1,0 +1,29 @@
+# Whitelist: everything is ignored except what is explicitly allowed,
+# so a forgotten secret or export in the folder can never be committed.
+*
+!.gitignore
+!README.md
+!SECURITY.md
+!LICENSE
+!*.env.example
+!.env.example
+!docker-compose.yml
+!sauvegarde.sh
+!relais-telegram/
+!relais-telegram/relais.py
+!cerveau/
+!cerveau/Dockerfile
+!cerveau/serveur.js
+!voix/
+!voix/Dockerfile
+!voix/serveur.py
+!studio/
+!studio/Dockerfile
+!studio/serveur.py
+!hooks/
+!hooks/pre-commit
+!systemd/
+!systemd/*.service
+!systemd/*.timer
+!workflows/
+!workflows/*.json

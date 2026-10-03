@@ -1,0 +1,120 @@
+# Stack de veille : n8n (workflows)
+#
+#   Démarrer : docker compose up -d
+#   Arrêter :  docker compose down
+#
+# Interface n8n : http://localhost:5678
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.41.6 # version épinglée : mise à jour volontaire uniquement
+    container_name: n8n
+    restart: unless-stopped
+    # Lié à 127.0.0.1 uniquement : invisible depuis le réseau (Wi-Fi public, LAN...)
+    ports:
+      - "127.0.0.1:5678:5678"
+    env_file: .env # contient N8N_ENCRYPTION_KEY (chiffre les identifiants stockés)
+    environment:
+      - GENERIC_TIMEZONE=Europe/Paris
+      - TZ=Europe/Paris
+      # Pas de télémétrie envoyée à n8n
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      # Les workflows ne peuvent pas lire les variables d'environnement (donc pas la clé)
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
+      # Le code exécuté dans les workflows tourne dans un processus séparé
+      - N8N_RUNNERS_ENABLED=true
+      # Purge automatique de l'historique d'exécutions après 14 jours
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=336
+    volumes:
+      - n8n_data:/home/node/.n8n
+    security_opt:
+      - no-new-privileges:true
+    networks: [default, interne]
+
+  # Va chercher les messages envoyés au bot et les transmet à n8n (aucun port exposé)
+  relais-telegram:
+    image: python@sha256:2dd78ad5cf13a0b68f5134dc49aa9950203a8cf4b7463431b9f3b398287c5059 # python:3.13-alpine
+    container_name: relais-telegram
+    restart: unless-stopped
+    depends_on: [n8n]
+    env_file: relais.env # TELEGRAM_TOKEN et RELAIS_SECRET (hors Git)
+    environment:
+      - N8N_WEBHOOK=http://n8n:5678/webhook/telegram-relais
+      - CHAT_AUTORISE=${TELEGRAM_CHAT_ID}
+      - TZ=CET-1CEST,M3.5.0,M10.5.0/3 # heure de Paris (format POSIX : pas besoin de tzdata)
+    command: ["python", "-u", "/app/relais.py"]
+    volumes:
+      - ./relais-telegram/relais.py:/app/relais.py:ro
+    # Durcissement : utilisateur sans privilèges, système de fichiers en lecture seule,
+    # aucune capacité Linux, mémoire limitée
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+
+  # Cerveau : Claude Code SANS outils, joignable uniquement par n8n (aucun port publié)
+  cerveau:
+    build: ./cerveau
+    image: assistant-cerveau:2.1.288
+    container_name: cerveau
+    restart: unless-stopped
+    env_file: cerveau.env # CLAUDE_CODE_OAUTH_TOKEN et CERVEAU_SECRET (hors Git)
+    environment:
+      - MODELE=sonnet
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/node # Claude Code y écrit sa config ; effacé à chaque redémarrage
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    pids_limit: 256
+
+  # Voix : transcription Whisper locale. Réseau interne uniquement : AUCUN accès à Internet.
+  voix:
+    build: ./voix
+    image: assistant-voix:whisper-small
+    container_name: voix
+    restart: unless-stopped
+    env_file: voix.env # VOIX_SECRET (hors Git)
+    environment:
+      - TZ=CET-1CEST,M3.5.0,M10.5.0/3 # heure de Paris
+    networks: [interne]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    pids_limit: 128
+
+  # Studio : script à deux voix -> podcast OGG/Opus, format vocal Telegram (Microsoft Denise/Henri, secours Piper local)
+  # Réseau par défaut : a besoin d'Internet pour les voix Microsoft. Aucun port publié.
+  studio:
+    build: ./studio
+    image: assistant-studio:1
+    container_name: studio
+    restart: unless-stopped
+    env_file: studio.env # STUDIO_SECRET (hors Git)
+    environment:
+      - TZ=CET-1CEST,M3.5.0,M10.5.0/3 # heure de Paris
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    pids_limit: 128
+
+networks:
+  # Réseau sans passerelle vers l'extérieur : seuls les conteneurs qui y sont branchés communiquent
+  interne:
+    internal: true
+
+volumes:
+  n8n_data:

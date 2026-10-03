@@ -1,0 +1,983 @@
+{
+  "id": "rapportQuotidien",
+  "name": "Rapport quotidien",
+  "nodes": [
+    {
+      "id": "n-trigger",
+      "name": "Toutes les heures (7h-21h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7-21 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n-gate",
+      "name": "Déjà envoyé aujourd'hui ?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Le rapport automatique n'est envoyé qu'UNE fois par jour : au premier\n// passage où le PC est allumé après 7h. Les passages suivants s'arrêtent ici.\n// Un lancement manuel passe toujours.\nconst memoire = $getWorkflowStaticData('global');\nconst aujourdhui = $now.setZone('Europe/Paris').toISODate();\n// Lancement automatique = le bloc de planification a été déclenché.\n// (Attention : $execution.mode vaut « production » et non « trigger » dans un bloc Code.)\nconst automatique = $('Toutes les heures (7h-21h)').isExecuted;\nif (automatique && memoire.dernierEnvoi === aujourdhui) return [];\n// silencieux = appelé par le podcast : on renvoie les données au lieu d'envoyer le message\nconst entree = $input.first().json;\n// ignorer : le bot n'a pas besoin de la journée pour cette question -> on s'arrête tout de suite\nif (entree.ignorer === true) return [];\nconst silencieux = entree.silencieux === true;\n// detail : le bot veut les titres et sujets (jamais demandé par le podcast)\nconst detail = entree.detail === true;\nreturn [{ json: { aujourdhui, silencieux, detail } }];\n"
+      }
+    },
+    {
+      "id": "n-Agendas-Compte1",
+      "name": "Agendas – Compte1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        100
+      ],
+      "parameters": {
+        "url": "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoPerso00000001",
+          "name": "Google RO – Compte1"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-cals-Compte1",
+      "name": "Un élément par agenda – Compte1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Un élément par agenda visible (hors \"Numéros de semaine\").\n// L'agenda principal est toujours inclus, même en cas d'erreur de la liste.\nconst r = $input.first().json;\nconst cals = (r.items ?? []).filter(k => k.primary || (k.selected !== false && !k.id.includes('#weeknum')));\nif (r.error || !cals.length) return [{ json: { id: 'primary', nom: '' } }];\nreturn cals.map(k => ({ json: { id: k.id, nom: k.primary ? '' : (k.summaryOverride ?? k.summary) } }));\n"
+      }
+    },
+    {
+      "id": "n-Agenda-Compte1",
+      "name": "Agenda – Compte1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        100
+      ],
+      "parameters": {
+        "url": "={{ 'https://www.googleapis.com/calendar/v3/calendars/' + encodeURIComponent($json.id) + '/events' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "timeMin",
+              "value": "={{ $now.setZone('Europe/Paris').startOf('day').toISO() }}"
+            },
+            {
+              "name": "timeMax",
+              "value": "={{ $now.setZone('Europe/Paris').plus({ days: 1 }).endOf('day').toISO() }}"
+            },
+            {
+              "name": "singleEvents",
+              "value": "true"
+            },
+            {
+              "name": "orderBy",
+              "value": "startTime"
+            },
+            {
+              "name": "maxResults",
+              "value": "50"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoPerso00000001",
+          "name": "Google RO – Compte1"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n-Mails-Compte1",
+      "name": "Mails – Compte1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        100
+      ],
+      "parameters": {
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "is:unread -in:chats ((is:important newer_than:2d -category:promotions -category:social -category:forums) OR to:school.example OR from:school.example OR cc:school.example)"
+            },
+            {
+              "name": "maxResults",
+              "value": "25"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoPerso00000001",
+          "name": "Google RO – Compte1"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-ids-Compte1",
+      "name": "Un élément par mail – Compte1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Transforme la liste de mails en un élément par mail.\n// S'il n'y a aucun mail, on émet quand même un élément vide pour que la\n// chaîne continue vers le compte suivant.\nconst r = $input.first().json;\nif (r.error || !r.messages?.length) return [{ json: { id: null } }];\nreturn r.messages.map(m => ({ json: { id: m.id } }));\n"
+      }
+    },
+    {
+      "id": "n-Détails-Compte1",
+      "name": "Détails – Compte1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        100
+      ],
+      "parameters": {
+        "url": "={{ $json.id ? 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + $json.id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=To&metadataHeaders=Cc' : 'https://gmail.googleapis.com/gmail/v1/users/me/profile' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoPerso00000001",
+          "name": "Google RO – Compte1"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n-Agendas-Compte2",
+      "name": "Agendas – Compte2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "url": "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoCyber00000001",
+          "name": "Google RO – Compte2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-cals-Compte2",
+      "name": "Un élément par agenda – Compte2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Un élément par agenda visible (hors \"Numéros de semaine\").\n// L'agenda principal est toujours inclus, même en cas d'erreur de la liste.\nconst r = $input.first().json;\nconst cals = (r.items ?? []).filter(k => k.primary || (k.selected !== false && !k.id.includes('#weeknum')));\nif (r.error || !cals.length) return [{ json: { id: 'primary', nom: '' } }];\nreturn cals.map(k => ({ json: { id: k.id, nom: k.primary ? '' : (k.summaryOverride ?? k.summary) } }));\n"
+      }
+    },
+    {
+      "id": "n-Agenda-Compte2",
+      "name": "Agenda – Compte2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "url": "={{ 'https://www.googleapis.com/calendar/v3/calendars/' + encodeURIComponent($json.id) + '/events' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "timeMin",
+              "value": "={{ $now.setZone('Europe/Paris').startOf('day').toISO() }}"
+            },
+            {
+              "name": "timeMax",
+              "value": "={{ $now.setZone('Europe/Paris').plus({ days: 1 }).endOf('day').toISO() }}"
+            },
+            {
+              "name": "singleEvents",
+              "value": "true"
+            },
+            {
+              "name": "orderBy",
+              "value": "startTime"
+            },
+            {
+              "name": "maxResults",
+              "value": "50"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoCyber00000001",
+          "name": "Google RO – Compte2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n-Mails-Compte2",
+      "name": "Mails – Compte2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "is:unread -in:chats ((is:important newer_than:2d -category:promotions -category:social -category:forums) OR to:school.example OR from:school.example OR cc:school.example)"
+            },
+            {
+              "name": "maxResults",
+              "value": "25"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoCyber00000001",
+          "name": "Google RO – Compte2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-ids-Compte2",
+      "name": "Un élément par mail – Compte2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Transforme la liste de mails en un élément par mail.\n// S'il n'y a aucun mail, on émet quand même un élément vide pour que la\n// chaîne continue vers le compte suivant.\nconst r = $input.first().json;\nif (r.error || !r.messages?.length) return [{ json: { id: null } }];\nreturn r.messages.map(m => ({ json: { id: m.id } }));\n"
+      }
+    },
+    {
+      "id": "n-Détails-Compte2",
+      "name": "Détails – Compte2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        300
+      ],
+      "parameters": {
+        "url": "={{ $json.id ? 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + $json.id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=To&metadataHeaders=Cc' : 'https://gmail.googleapis.com/gmail/v1/users/me/profile' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoCyber00000001",
+          "name": "Google RO – Compte2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n-Agendas-Compte3",
+      "name": "Agendas – Compte3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        500
+      ],
+      "parameters": {
+        "url": "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoJeux000000001",
+          "name": "Google RO – Compte3"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-cals-Compte3",
+      "name": "Un élément par agenda – Compte3",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        500
+      ],
+      "parameters": {
+        "jsCode": "// Un élément par agenda visible (hors \"Numéros de semaine\").\n// L'agenda principal est toujours inclus, même en cas d'erreur de la liste.\nconst r = $input.first().json;\nconst cals = (r.items ?? []).filter(k => k.primary || (k.selected !== false && !k.id.includes('#weeknum')));\nif (r.error || !cals.length) return [{ json: { id: 'primary', nom: '' } }];\nreturn cals.map(k => ({ json: { id: k.id, nom: k.primary ? '' : (k.summaryOverride ?? k.summary) } }));\n"
+      }
+    },
+    {
+      "id": "n-Agenda-Compte3",
+      "name": "Agenda – Compte3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        500
+      ],
+      "parameters": {
+        "url": "={{ 'https://www.googleapis.com/calendar/v3/calendars/' + encodeURIComponent($json.id) + '/events' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "timeMin",
+              "value": "={{ $now.setZone('Europe/Paris').startOf('day').toISO() }}"
+            },
+            {
+              "name": "timeMax",
+              "value": "={{ $now.setZone('Europe/Paris').plus({ days: 1 }).endOf('day').toISO() }}"
+            },
+            {
+              "name": "singleEvents",
+              "value": "true"
+            },
+            {
+              "name": "orderBy",
+              "value": "startTime"
+            },
+            {
+              "name": "maxResults",
+              "value": "50"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoJeux000000001",
+          "name": "Google RO – Compte3"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n-Mails-Compte3",
+      "name": "Mails – Compte3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        500
+      ],
+      "parameters": {
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "is:unread -in:chats ((is:important newer_than:2d -category:promotions -category:social -category:forums) OR to:school.example OR from:school.example OR cc:school.example)"
+            },
+            {
+              "name": "maxResults",
+              "value": "25"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoJeux000000001",
+          "name": "Google RO – Compte3"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-ids-Compte3",
+      "name": "Un élément par mail – Compte3",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        500
+      ],
+      "parameters": {
+        "jsCode": "// Transforme la liste de mails en un élément par mail.\n// S'il n'y a aucun mail, on émet quand même un élément vide pour que la\n// chaîne continue vers le compte suivant.\nconst r = $input.first().json;\nif (r.error || !r.messages?.length) return [{ json: { id: null } }];\nreturn r.messages.map(m => ({ json: { id: m.id } }));\n"
+      }
+    },
+    {
+      "id": "n-Détails-Compte3",
+      "name": "Détails – Compte3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        500
+      ],
+      "parameters": {
+        "url": "={{ $json.id ? 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + $json.id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=To&metadataHeaders=Cc' : 'https://gmail.googleapis.com/gmail/v1/users/me/profile' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "gRoJeux000000001",
+          "name": "Google RO – Compte3"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n-format",
+      "name": "Mettre en forme",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Assemble le rapport à partir des blocs précédents.\n// Par sécurité, on n'envoie que l'expéditeur et le sujet (jamais le contenu),\n// et les suites de chiffres sont masquées (codes de vérification, 2FA...).\nconst COMPTES = ['Compte1', 'Compte2', 'Compte3'];\nconst ECOLE = /school\\.example/i;\n\nconst esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst court = (s, n = 90) => (s.length > n ? s.slice(0, n - 1) + '…' : s);\nconst masquer = s => s.replace(/\\d[\\d -]{2,}\\d/g, m => (m.replace(/\\D/g, '').length >= 4 ? '••••' : m));\nconst lire = nom => { try { return $(nom).all().map(i => i.json); } catch { return []; } };\nconst expediteur = from => (from.match(/^\\s*\"?([^\"<]+?)\"?\\s*</)?.[1] ?? from).trim();\n\nconst erreurs = [];\nconst evenements = [];\nconst dejaVus = new Set();\nconst ecole = [];\nconst importants = {};\n\nfor (const c of COMPTES) {\n  // Les réponses \"Agenda – X\" sont dans le même ordre que les agendas listés\n  const cals = lire(`Un élément par agenda – ${c}`);\n  const reponses = lire(`Agenda – ${c}`);\n  if (!reponses.length || reponses.every(r => r.error)) erreurs.push(`Agenda ${c}`);\n  reponses.forEach((r, i) => {\n    if (r.error) return;\n    const cal = cals[i] ?? {};\n    const ferie = String(cal.id).includes('#holiday');\n    for (const e of r.items ?? []) {\n      if (e.status === 'cancelled') continue;\n      const debut = e.start?.dateTime ?? e.start?.date;\n      const jour = DateTime.fromISO(debut, { zone: 'Europe/Paris' }).setZone('Europe/Paris').toISODate();\n      // Un même jour férié ou anniversaire peut exister dans plusieurs comptes : on ne le garde qu'une fois\n      const cle = ferie ? 'ferie' + jour : (e.summary ?? '') + debut;\n      if (dejaVus.has(cle)) continue;\n      dejaVus.add(cle);\n      evenements.push({\n        compte: c,\n        agenda: cal.nom,\n        titre: e.summary ?? '(sans titre)',\n        debut,\n        jour,\n        journee: !e.start?.dateTime,\n        lieu: e.location,\n        type: ferie ? 'ferie' : e.eventType,\n      });\n    }\n  });\n\n  const liste = lire(`Mails – ${c}`)[0];\n  if (!liste || liste.error) { erreurs.push(`Gmail ${c}`); continue; }\n  const plus = liste.nextPageToken ? 1 : 0;\n\n  for (const m of lire(`Détails – ${c}`)) {\n    if (!m.payload) continue; // élément vide ou erreur\n    const h = n => m.payload.headers?.find(x => x.name.toLowerCase() === n)?.value ?? '';\n    const mail = { compte: c, de: expediteur(h('from')), sujet: masquer(h('subject') || '(sans sujet)') };\n    if (ECOLE.test(h('from') + h('to') + h('cc'))) ecole.push(mail);\n    else (importants[c] ??= []).push(mail);\n  }\n  if (plus) (importants[c] ??= []).push({ de: '…', sujet: \"et d'autres (plus de 25)\" });\n}\n\nevenements.sort((a, b) => (a.journee === b.journee ? String(a.debut).localeCompare(String(b.debut)) : a.journee ? -1 : 1));\n\nconst L = [];\nconst jour = $now.setZone('Europe/Paris').setLocale('fr').toFormat('cccc d LLLL');\nL.push(`☀️ <b>Rapport du ${jour}</b>`);\n\nconst ICONES = { birthday: '🎂', ferie: '🇫🇷' };\nfunction agenda(titre, liste) {\n  L.push('', `<b>${titre} (${liste.length})</b>`);\n  if (!liste.length) L.push('Rien de prévu.');\n  for (const e of liste) {\n    const h = e.journee ? '' : `<b>${DateTime.fromISO(e.debut).setZone('Europe/Paris').toFormat(\"HH'h'mm\")}</b> `;\n    const ou = e.type === 'ferie' ? '' : ` <i>(${e.compte}${e.agenda ? ' · ' + esc(e.agenda) : ''})</i>`;\n    L.push(`• ${ICONES[e.type] ?? '📌'} ${h}${esc(court(e.titre))}${e.lieu ? ` — <i>${esc(court(e.lieu, 40))}</i>` : ''}${ou}`);\n  }\n}\nconst ajd = $now.setZone('Europe/Paris').toISODate();\nconst demain = $now.setZone('Europe/Paris').plus({ days: 1 }).toISODate();\nconst evAjd = evenements.filter(e => e.jour <= ajd); // <= : inclut les événements sur plusieurs jours déjà commencés\nconst evDemain = evenements.filter(e => e.jour === demain);\nagenda(\"📅 Aujourd'hui\", evAjd);\nagenda('🔜 Demain', evDemain);\n\n// Résumé général pour le podcast : volontairement SANS titres ni noms\nconst resume = l => ({\n  rendez_vous: l.filter(e => !['birthday', 'ferie'].includes(e.type))\n    .map(e => (e.journee ? 'toute la journée' : DateTime.fromISO(e.debut).setZone('Europe/Paris').toFormat(\"HH'h'mm\"))),\n  anniversaires: l.filter(e => e.type === 'birthday').length,\n  jours_feries: l.filter(e => e.type === 'ferie').map(e => e.titre), // noms publics (ex : Toussaint)\n});\n\nL.push('', `<b>🎓 École — non lus (${ecole.length})</b>`);\nif (!ecole.length) L.push('Rien de nouveau.');\nfor (const m of ecole) L.push(`• <b>${esc(court(m.de, 40))}</b> — ${esc(court(m.sujet))}`);\n\nconst nb = Object.values(importants).flat().length;\nL.push('', `<b>📬 Mails importants non lus (${nb})</b>`);\nif (!nb) L.push('Rien d\\'important. 👌');\nfor (const c of COMPTES) {\n  if (!importants[c]) continue;\n  L.push(`<u>${c}</u>`);\n  for (const m of importants[c]) L.push(`• <b>${esc(court(m.de, 40))}</b> — ${esc(court(m.sujet))}`);\n}\n\nif (erreurs.length) L.push('', `⚠️ Indisponible : ${erreurs.join(', ')}`);\n\nconst messages = [];\nlet courant = '';\nfor (const l of L) {\n  if (courant.length + l.length + 1 > 4000) { messages.push(courant); courant = ''; }\n  courant += (courant ? '\\n' : '') + l;\n}\nif (courant) messages.push(courant);\nconst nbImportants = Object.values(importants).flat().filter(m => m.de !== '…').length;\nconst donnees = {\n  aujourdhui: resume(evAjd),\n  demain: resume(evDemain),\n  mails_ecole_non_lus: ecole.length,\n  mails_importants_non_lus: nbImportants,\n  sources_indisponibles: erreurs,\n};\n// Version détaillée, réservée au bot (titres d'événements, expéditeurs et sujets de mails)\nconst detail = {\n  evenements: [...evAjd, ...evDemain].map(e => ({\n    jour: e.jour === demain ? 'demain' : \"aujourd'hui\",\n    heure: e.journee ? 'toute la journée' : DateTime.fromISO(e.debut).setZone('Europe/Paris').toFormat(\"HH'h'mm\"),\n    titre: e.titre, compte: e.compte, type: e.type === 'birthday' ? 'anniversaire' : e.type === 'ferie' ? 'jour férié' : 'événement',\n  })),\n  mails_ecole_non_lus: ecole.map(m => ({ de: m.de, sujet: m.sujet })),\n  mails_importants_non_lus: importants,\n};\nreturn messages.map(texte => ({ json: { texte, donnees, detail } }));\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "n-telegram",
+      "name": "Envoyer sur Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2060,
+        300
+      ],
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.texte }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "J7Ipuv10Sqwp4CWV",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "id": "n-marquer",
+      "name": "Marquer comme envoyé",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2280,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Mémorise que le rapport automatique du jour est parti (seulement APRÈS l'envoi réussi)\nif (!$('Toutes les heures (7h-21h)').isExecuted) return [];\n$getWorkflowStaticData('global').dernierEnvoi = $('Déjà envoyé aujourd\\'hui ?').first().json.aujourdhui;\nreturn [];\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "n-note",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -200
+      ],
+      "parameters": {
+        "width": 820,
+        "height": 240,
+        "content": "## Rapport quotidien\nEnvoyé **une fois par jour**, au premier passage après 7h où le PC est allumé.\n\n- **Agenda** d'aujourd'hui et de demain (tous les agendas des 3 comptes) : 🎂 anniversaires, 🇫🇷 jours fériés, 📌 événements\n- **École** : TOUS les mails non lus de/vers school.example\n- **Importants** : mails non lus marqués importants par Gmail (2 derniers jours, hors promos)\n\n🔐 Accès Google en **lecture seule**. Seuls l'expéditeur et le sujet partent sur Telegram, chiffres masqués."
+      }
+    },
+    {
+      "id": "n-manuel",
+      "name": "Tester maintenant",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        500
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "n-bot",
+      "name": "Appelé par le bot",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "position": [
+        0,
+        700
+      ]
+    },
+    {
+      "id": "n-mode",
+      "name": "Envoyer ou renvoyer ?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2060,
+        500
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $('Déjà envoyé aujourd\\'hui ?').first().json.silencieux ? 1 : 0 }}"
+      }
+    },
+    {
+      "id": "n-donnees",
+      "name": "Données pour le podcast",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2280,
+        700
+      ],
+      "parameters": {
+        "jsCode": "// Renvoyé à l'appelant : résumé général (podcast), plus le détail seulement si le bot l'a demandé\nconst { donnees, detail } = $input.first().json;\nreturn [{ json: $('Déjà envoyé aujourd\\'hui ?').first().json.detail ? { ...donnees, detail } : donnees }];"
+      }
+    }
+  ],
+  "connections": {
+    "Toutes les heures (7h-21h)": {
+      "main": [
+        [
+          {
+            "node": "Déjà envoyé aujourd'hui ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Déjà envoyé aujourd'hui ?": {
+      "main": [
+        [
+          {
+            "node": "Agendas – Compte1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agendas – Compte1": {
+      "main": [
+        [
+          {
+            "node": "Un élément par agenda – Compte1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Un élément par agenda – Compte1": {
+      "main": [
+        [
+          {
+            "node": "Agenda – Compte1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agenda – Compte1": {
+      "main": [
+        [
+          {
+            "node": "Mails – Compte1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mails – Compte1": {
+      "main": [
+        [
+          {
+            "node": "Un élément par mail – Compte1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Un élément par mail – Compte1": {
+      "main": [
+        [
+          {
+            "node": "Détails – Compte1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Détails – Compte1": {
+      "main": [
+        [
+          {
+            "node": "Agendas – Compte2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agendas – Compte2": {
+      "main": [
+        [
+          {
+            "node": "Un élément par agenda – Compte2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Un élément par agenda – Compte2": {
+      "main": [
+        [
+          {
+            "node": "Agenda – Compte2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agenda – Compte2": {
+      "main": [
+        [
+          {
+            "node": "Mails – Compte2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mails – Compte2": {
+      "main": [
+        [
+          {
+            "node": "Un élément par mail – Compte2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Un élément par mail – Compte2": {
+      "main": [
+        [
+          {
+            "node": "Détails – Compte2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Détails – Compte2": {
+      "main": [
+        [
+          {
+            "node": "Agendas – Compte3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agendas – Compte3": {
+      "main": [
+        [
+          {
+            "node": "Un élément par agenda – Compte3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Un élément par agenda – Compte3": {
+      "main": [
+        [
+          {
+            "node": "Agenda – Compte3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agenda – Compte3": {
+      "main": [
+        [
+          {
+            "node": "Mails – Compte3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mails – Compte3": {
+      "main": [
+        [
+          {
+            "node": "Un élément par mail – Compte3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Un élément par mail – Compte3": {
+      "main": [
+        [
+          {
+            "node": "Détails – Compte3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Détails – Compte3": {
+      "main": [
+        [
+          {
+            "node": "Mettre en forme",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mettre en forme": {
+      "main": [
+        [
+          {
+            "node": "Envoyer ou renvoyer ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envoyer sur Telegram": {
+      "main": [
+        [
+          {
+            "node": "Marquer comme envoyé",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tester maintenant": {
+      "main": [
+        [
+          {
+            "node": "Déjà envoyé aujourd'hui ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appelé par le bot": {
+      "main": [
+        [
+          {
+            "node": "Déjà envoyé aujourd'hui ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envoyer ou renvoyer ?": {
+      "main": [
+        [
+          {
+            "node": "Envoyer sur Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Données pour le podcast",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "errorWorkflow": "alertePanne00001"
+  },
+  "active": false
+}

@@ -1,0 +1,463 @@
+{
+  "id": "podcastMatin0001",
+  "name": "Podcast du matin",
+  "nodes": [
+    {
+      "id": "n-trigger",
+      "name": "Toutes les heures (7h05-21h05)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "5 7-21 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n-bot",
+      "name": "Appelé par le bot",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        400
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "n-manuel",
+      "name": "Tester maintenant",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        600
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "n-gate",
+      "name": "Déjà envoyé aujourd'hui ?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Podcast automatique : une fois par jour, au premier passage après 7h05.\n// Lancement manuel ou via /podcast : toujours.\nconst memoire = $getWorkflowStaticData('global');\nconst aujourdhui = $now.setZone('Europe/Paris').toISODate();\n// Lancement automatique = le bloc de planification a été déclenché.\n// (Attention : $execution.mode vaut « production » et non « trigger » dans un bloc Code.)\nconst automatique = $('Toutes les heures (7h05-21h05)').isExecuted;\nif (automatique && memoire.dernierEnvoi === aujourdhui) return [];\n// silencieux : le rapport renvoie ses données au lieu d'envoyer un message\nreturn [{ json: { aujourdhui, silencieux: true } }];\n"
+      }
+    },
+    {
+      "id": "n-journee",
+      "name": "Ma journée (rapport)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        480,
+        400
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "rapportQuotidien",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n-kev",
+      "name": "Lire CISA KEV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        400
+      ],
+      "parameters": {
+        "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-certfr",
+      "name": "Lire CERT-FR",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        960,
+        400
+      ],
+      "parameters": {
+        "url": "https://www.cert.ssi.gouv.fr/alerte/feed/",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-nvd",
+      "name": "Lire NVD (critiques)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        400
+      ],
+      "parameters": {
+        "url": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+        "options": {
+          "timeout": 60000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pubStartDate",
+              "value": "={{ $now.minus({ days: 1 }).toUTC().toFormat(\"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'\") }}"
+            },
+            {
+              "name": "pubEndDate",
+              "value": "={{ $now.toUTC().toFormat(\"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'\") }}"
+            },
+            {
+              "name": "cvssV3Severity",
+              "value": "CRITICAL"
+            }
+          ]
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "n-preparer",
+      "name": "Préparer les infos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Rassemble les informations du jour en un texte pour le cerveau.\n// Ta journée n'est décrite que de façon GÉNÉRALE (aucun titre, aucun sujet de mail).\nconst lire = nom => { try { return $(nom).all().map(i => i.json); } catch { return []; } };\nconst maintenant = $now.setZone('Europe/Paris');\nconst ilYa = jours => maintenant.minus({ days: jours }).toMillis();\n\nconst journee = lire('Ma journée (rapport)')[0] ?? {};\nconst kevBrut = lire('Lire CISA KEV')[0] ?? {};\nconst kev = (kevBrut.vulnerabilities ?? [])\n  .filter(v => new Date(v.dateAdded).getTime() >= ilYa(2))\n  .map(v => `- ${v.vendorProject} ${v.product} : ${v.vulnerabilityName}. ${v.shortDescription}` +\n            (v.knownRansomwareCampaignUse === 'Known' ? ' (utilisée par des ransomwares)' : ''));\nconst certfr = lire('Lire CERT-FR')\n  .filter(a => a.isoDate && new Date(a.isoDate).getTime() >= ilYa(3))\n  .map(a => `- ${a.title}`);\nconst nvdBrut = lire('Lire NVD (critiques)')[0] ?? {};\nconst nvd = (nvdBrut.vulnerabilities ?? []).map(({ cve }) => ({\n  score: cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore ?? cve.metrics?.cvssMetricV40?.[0]?.cvssData?.baseScore ?? 0,\n  desc: cve.descriptions?.find(d => d.lang === 'en')?.value ?? '',\n})).sort((a, b) => b.score - a.score);\n\nconst blocs = [\n  `Date : ${maintenant.setLocale('fr').toFormat('cccc d LLLL yyyy')}`,\n  '',\n  'TA JOURNÉE (informations générales uniquement) :',\n  journee.aujourdhui ? JSON.stringify(journee) : 'Indisponible ce matin : ne pas en parler.',\n  '',\n  'ACTU CYBER :',\n  `Vulnérabilités ajoutées au catalogue CISA KEV (exploitées activement) ces 2 derniers jours : ${kev.length}`,\n  ...kev.slice(0, 6),\n  `Alertes CERT-FR ces 3 derniers jours : ${certfr.length}`,\n  ...certfr.slice(0, 4),\n  `Nouvelles CVE critiques (NVD) ces dernières 24 h : ${nvd.length}. Les plus graves :`,\n  ...nvd.slice(0, 3).map(v => `- CVSS ${v.score} : ${v.desc.slice(0, 300)}`),\n];\nreturn [{ json: { question: blocs.join('\\n') } }];\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "n-script",
+      "name": "Écrire le script (cerveau)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1680,
+        400
+      ],
+      "parameters": {
+        "url": "http://cerveau:8080/demander",
+        "options": {
+          "timeout": 300000
+        },
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ question: $json.question, consigne: \"Tu \\u00e9cris le script d'un court podcast audio quotidien, en fran\\u00e7ais, \\u00e0 deux voix : Denise (voix A) et Henri (voix B), deux coll\\u00e8gues qui briefent l'auditeur le matin.\\n\\nStructure :\\n1. Accueil tr\\u00e8s court avec le jour.\\n2. Sa journ\\u00e9e : r\\u00e9sume les informations fournies de fa\\u00e7on g\\u00e9n\\u00e9rale (nombre de rendez-vous et heures, anniversaires, jours f\\u00e9ri\\u00e9s, nombre de mails École et de mails importants non lus). Si tout est vide, dis-le en une phrase.\\n3. L'actu cyber : priorit\\u00e9 aux vuln\\u00e9rabilit\\u00e9s exploit\\u00e9es activement, puis aux alertes CERT-FR, puis aux CVE critiques. Pour chaque point important, dis en une phrase pourquoi \\u00e7a compte c\\u00f4t\\u00e9 d\\u00e9fense.\\n4. Une phrase de conclusion.\\n\\nR\\u00e8gles :\\n- Dur\\u00e9e : 2 \\u00e0 3 minutes \\u00e0 l'oral, soit 300 \\u00e0 420 mots au total.\\n- N'invente rien : n'utilise que les informations fournies.\\n- Le texte sera lu par une synth\\u00e8se vocale : pas de Markdown, pas d'emoji, pas d'URL, pas de num\\u00e9ros de CVE (dis plut\\u00f4t \\u00ab une faille dans Fortinet FortiMail \\u00bb), \\u00e9cris les heures en toutes lettres ou au format \\u00ab 9 h 30 \\u00bb.\\n- R\\u00e9pliques courtes (1 \\u00e0 3 phrases), alternance naturelle, ton direct et sympathique, sans remplissage.\\n- R\\u00e9ponds UNIQUEMENT avec un JSON valide, sans texte autour : {\\\"repliques\\\": [{\\\"voix\\\": \\\"A\\\", \\\"texte\\\": \\\"...\\\"}, {\\\"voix\\\": \\\"B\\\", \\\"texte\\\": \\\"...\\\"}]}\" }) }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cerveauSecret001",
+          "name": "Secret du cerveau"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n-lire",
+      "name": "Lire le script",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Extrait le JSON du script (tolère un éventuel bloc ``` autour)\nconst r = $input.first().json;\nif (r.error || !r.reponse) throw new Error(`Le cerveau n'a pas répondu : ${String(r.error?.message ?? r.erreur ?? 'réponse vide').slice(0, 200)}`);\nconst brut = r.reponse.replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '').trim();\nlet script;\ntry { script = JSON.parse(brut.slice(brut.indexOf('{'), brut.lastIndexOf('}') + 1)); }\ncatch { throw new Error('Le script du podcast n\\'est pas un JSON valide'); }\nconst repliques = (script.repliques ?? []).filter(x => x?.texte);\nif (repliques.length < 2) throw new Error('Le script du podcast est vide');\nreturn [{ json: { repliques } }];\n"
+      }
+    },
+    {
+      "id": "n-studio",
+      "name": "Enregistrer (studio)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2160,
+        400
+      ],
+      "parameters": {
+        "url": "http://studio:8080/podcast",
+        "options": {
+          "timeout": 300000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        },
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ repliques: $json.repliques }) }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "studioSecret0001",
+          "name": "Secret du studio"
+        }
+      }
+    },
+    {
+      "id": "n-envoyer",
+      "name": "Envoyer le vocal (relais)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2400,
+        400
+      ],
+      "parameters": {
+        "url": "={{ 'http://relais-telegram:8081/vocal?duree=' + ($json.headers?.['x-duree'] ?? 0) + '&legende=' + encodeURIComponent('🎙️ Ton briefing du ' + $now.setZone('Europe/Paris').setLocale('fr').toFormat('cccc d LLLL') + ($json.headers?.['x-moteur'] === 'piper' ? ' (voix de secours)' : '')) }}",
+        "options": {
+          "timeout": 120000
+        },
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "relaisSecret0001",
+          "name": "Secret du relais Telegram"
+        }
+      }
+    },
+    {
+      "id": "n-marquer",
+      "name": "Marquer comme envoyé",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Mémorise que le podcast automatique du jour est parti (seulement APRÈS l'envoi réussi)\nif (!$('Toutes les heures (7h05-21h05)').isExecuted) return [];\n$getWorkflowStaticData('global').dernierEnvoi = $('Déjà envoyé aujourd\\'hui ?').first().json.aujourdhui;\nreturn [];\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "n-note",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -40
+      ],
+      "parameters": {
+        "width": 1180,
+        "height": 200,
+        "content": "## Podcast du matin\nTa journée (résumé **général** fourni par le Rapport quotidien) + actu cyber → script à deux voix écrit par le **cerveau** → **studio** (Denise/Henri, secours Piper local) → **vrai message vocal** envoyé par le **relais**.\n\nAutomatique 1×/jour (premier passage après 7h05), ou à la demande avec /podcast. En cas d'échec : Alerte panne."
+      }
+    }
+  ],
+  "connections": {
+    "Déjà envoyé aujourd'hui ?": {
+      "main": [
+        [
+          {
+            "node": "Ma journée (rapport)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ma journée (rapport)": {
+      "main": [
+        [
+          {
+            "node": "Lire CISA KEV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire CISA KEV": {
+      "main": [
+        [
+          {
+            "node": "Lire CERT-FR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire CERT-FR": {
+      "main": [
+        [
+          {
+            "node": "Lire NVD (critiques)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire NVD (critiques)": {
+      "main": [
+        [
+          {
+            "node": "Préparer les infos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer les infos": {
+      "main": [
+        [
+          {
+            "node": "Écrire le script (cerveau)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Écrire le script (cerveau)": {
+      "main": [
+        [
+          {
+            "node": "Lire le script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire le script": {
+      "main": [
+        [
+          {
+            "node": "Enregistrer (studio)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enregistrer (studio)": {
+      "main": [
+        [
+          {
+            "node": "Envoyer le vocal (relais)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envoyer le vocal (relais)": {
+      "main": [
+        [
+          {
+            "node": "Marquer comme envoyé",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Toutes les heures (7h05-21h05)": {
+      "main": [
+        [
+          {
+            "node": "Déjà envoyé aujourd'hui ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appelé par le bot": {
+      "main": [
+        [
+          {
+            "node": "Déjà envoyé aujourd'hui ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tester maintenant": {
+      "main": [
+        [
+          {
+            "node": "Déjà envoyé aujourd'hui ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "errorWorkflow": "alertePanne00001"
+  },
+  "active": false
+}
