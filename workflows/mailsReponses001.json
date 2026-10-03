@@ -36,7 +36,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "// Entrée : { action: rediger | modifier | valider | annuler, compte: P|C|J, id, instructions? }\n// Tout est vérifié : ces valeurs viennent de boutons Telegram, on ne leur fait pas confiance aveuglément.\nconst e = $input.first().json;\nconst ACTIONS = { rediger: 0, modifier: 1, valider: 2, envoyer: 2, annuler: 3, 'confirmer-envoi': 4 };\nif (!(e.action in ACTIONS) || !['P', 'C', 'J'].includes(e.compte) || !/^[0-9a-f]{8,32}$/i.test(String(e.id))) return [];\nreturn [{ json: { sortie: ACTIONS[e.action], action: e.action, compte: e.compte, id: e.id,\n                  instructions: String(e.instructions ?? '').slice(0, 2000) } }];\n"
+        "jsCode": "// Entrée : { action: rediger | modifier | valider | annuler, compte: P|C|J, id, instructions? }\n// Tout est vérifié : ces valeurs viennent de boutons Telegram, on ne leur fait pas confiance aveuglément.\nconst e = $input.first().json;\nconst ACTIONS = { rediger: 0, modifier: 1, valider: 2, envoyer: 2, annuler: 3, 'confirmer-envoi': 4 };\nif (!(e.action in ACTIONS) || !['P', 'C', 'J'].includes(e.compte) || !/^[0-9a-f]{8,32}$/i.test(String(e.id))) return [];\nreturn [{ json: { sortie: ACTIONS[e.action], action: e.action, compte: e.compte, id: e.id,\n                  instructions: String(e.instructions ?? '').slice(0, 2000),\n                  canal: e.canal === 'web' ? 'web' : 'telegram' } }];\n"
       }
     },
     {
@@ -380,7 +380,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1980,
+        2200,
         300
       ],
       "parameters": {
@@ -672,6 +672,34 @@
         "height": 240,
         "content": "## Mails : réponses\nAppelé par le bot quand tu cliques sur un bouton.\n- **rédiger / modifier** : lit le mail (lecture seule) ; le cerveau ne reçoit QUE ce mail\n- **valider** : brouillon Gmail · **confirmer-envoi** → **envoyer** : brouillon puis envoi (2 clics obligatoires)\n- Seuls les blocs « Créer le brouillon » (POST /drafts) et « Envoyer » (POST /drafts/send) utilisent gmail.compose\n- École : toujours texte à copier dans Outlook"
       }
+    },
+    {
+      "id": "n-canal",
+      "name": "Canal ?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1980,
+        300
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $('Que faire ?').first().json.canal === 'web' ? 1 : 0 }}"
+      }
+    },
+    {
+      "id": "n-web",
+      "name": "Réponse au site",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        480
+      ],
+      "parameters": {
+        "jsCode": "// Demande venue du tableau de bord : on renvoie le message (sans HTML) au lieu d'écrire sur Telegram\nconst t = String($input.first().json.texte ?? '');\nreturn [{ json: { message: t.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').slice(0, 600) } }];"
+      }
     }
   ],
   "connections": {
@@ -842,7 +870,7 @@
       "main": [
         [
           {
-            "node": "Envoyer (relais)",
+            "node": "Canal ?",
             "type": "main",
             "index": 0
           }
@@ -929,7 +957,7 @@
       "main": [
         [
           {
-            "node": "Envoyer (relais)",
+            "node": "Canal ?",
             "type": "main",
             "index": 0
           }
@@ -940,7 +968,7 @@
       "main": [
         [
           {
-            "node": "Envoyer (relais)",
+            "node": "Canal ?",
             "type": "main",
             "index": 0
           }
@@ -951,7 +979,7 @@
       "main": [
         [
           {
-            "node": "Envoyer (relais)",
+            "node": "Canal ?",
             "type": "main",
             "index": 0
           }
@@ -1097,6 +1125,24 @@
         [
           {
             "node": "Confirmer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Canal ?": {
+      "main": [
+        [
+          {
+            "node": "Envoyer (relais)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Réponse au site",
             "type": "main",
             "index": 0
           }

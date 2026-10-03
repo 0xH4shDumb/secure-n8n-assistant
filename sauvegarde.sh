@@ -51,7 +51,7 @@ docker exec n8n rm -f /tmp/identifiants.json
 ls -1t "$LOCAL"/identifiants-*.json | tail -n +$((GARDER + 1)) | xargs -r rm -f
 
 # Fichiers de secrets des conteneurs (nécessaires pour une restauration) : local uniquement
-tar -czf "$LOCAL/secrets-$(date +%F).tar.gz" .env relais.env cerveau.env voix.env studio.env tableau.env
+tar -czf "$LOCAL/secrets-$(date +%F).tar.gz" .env relais.env cerveau.env voix.env studio.env
 chmod 600 "$LOCAL/secrets-$(date +%F).tar.gz"
 ls -1t "$LOCAL"/secrets-*.tar.gz | tail -n +$((GARDER + 1)) | xargs -r rm -f
 
