@@ -1,0 +1,7 @@
+[Unit]
+Description=Chien de garde de l'assistant (santé des conteneurs, réparation, alertes)
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/secure-n8n-assistant/chien-de-garde.sh

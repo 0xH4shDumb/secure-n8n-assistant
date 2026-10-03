@@ -9,6 +9,7 @@
 !.env.example
 !docker-compose.yml
 !sauvegarde.sh
+!chien-de-garde.sh
 !relais-telegram/
 !relais-telegram/relais.py
 !cerveau/

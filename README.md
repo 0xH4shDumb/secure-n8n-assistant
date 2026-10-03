@@ -21,6 +21,7 @@ and nothing is ever sent on your behalf without your explicit double confirmatio
 | 🤖 | **Conversational bot** | Free text **or voice** questions, short-term memory, answers grounded in your real data (agenda, emails, system status, threat watch). |
 | 📧 | **Email assistant** | New important email → notification with buttons → AI-drafted reply → edit by text or voice → Gmail draft **or** send after double confirmation. |
 | 🩺 | **Remote supervision** | `/statut`, `/erreurs`, `/pause`, `/reprendre` from Telegram; failure alerts; nightly backups. |
+| 🐕 | **Watchdog** | Docker healthchecks on every container + a systemd watchdog every 5 min that self-heals (restart, then recreate) and alerts **directly** through the Telegram API, independently of n8n and the relay. |
 
 ## Architecture
 
@@ -107,7 +108,7 @@ Finally publish the workflows and enable the nightly backup:
 for id in $(docker exec n8n n8n list:workflow | cut -d'|' -f1); do docker exec n8n n8n publish:workflow --id="$id"; done
 docker compose restart n8n
 mkdir -p ~/.config/systemd/user && cp systemd/* ~/.config/systemd/user/
-systemctl --user daemon-reload && systemctl --user enable --now assistant-sauvegarde.timer
+systemctl --user daemon-reload && systemctl --user enable --now assistant-sauvegarde.timer assistant-chien-de-garde.timer
 ```
 
 ## Lessons learned
