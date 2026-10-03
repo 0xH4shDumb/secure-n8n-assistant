@@ -10,6 +10,9 @@
 !docker-compose.yml
 !sauvegarde.sh
 !chien-de-garde.sh
+!maison.sh
+!caddy/
+!caddy/Caddyfile
 !relais-telegram/
 !relais-telegram/relais.py
 !cerveau/

@@ -22,6 +22,7 @@ and nothing is ever sent on your behalf without your explicit double confirmatio
 | 📧 | **Email assistant** | New important email → notification with buttons → AI-drafted reply → edit by text or voice → Gmail draft **or** send after double confirmation. |
 | 🩺 | **Remote supervision** | `/statut`, `/erreurs`, `/pause`, `/reprendre` from Telegram; failure alerts; nightly backups. |
 | 🖥️ | **Web dashboard** | Read-only local page (`/webhook/tableau`) with containers, workflows, upcoming runs, pending emails, threat watch and watchdog journal. Basic auth, Host-header check against DNS rebinding, everything escaped. |
+| 🏠 | **Home-only LAN access** | Optional Caddy reverse proxy (HTTPS with a local CA) exposing ONLY the dashboard. Started automatically when the laptop is on the home network (connection name **and** router MAC, against evil-twin Wi-Fi), stopped everywhere else. Note: Docker-published ports bypass ufw, hence filtering in Caddy itself. |
 | 🐕 | **Watchdog** | Docker healthchecks on every container + a systemd watchdog every 5 min that self-heals (restart, then recreate) and alerts **directly** through the Telegram API, independently of n8n and the relay. |
 
 ## Architecture

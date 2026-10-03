@@ -1,0 +1,47 @@
+# Accès au tableau de bord depuis le réseau local de la maison.
+# Expose UNIQUEMENT le tableau de bord : l'éditeur n8n, son API et les autres webhooks restent invisibles.
+# Démarré/arrêté automatiquement par maison.sh selon le réseau Wi-Fi.
+{
+	admin off
+	skip_install_trust
+	auto_https disable_redirects
+	# Connexion par adresse IP : le navigateur n'envoie pas de SNI, on présente ce certificat-là
+	default_sni {$LAN_IP}
+	pki {
+		ca local {
+			name "Assistant - CA locale"
+		}
+	}
+}
+
+https://{$LAN_IP}:8443, https://{$NOM_HOTE}.local:8443 {
+	# Certificat émis par la CA locale de Caddy (à installer une fois sur tes appareils)
+	tls internal
+
+	# Uniquement les appareils du réseau de la maison
+	@exterieur not remote_ip {$RESEAU}
+	respond @exterieur "Accès refusé." 403
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# Le tableau de bord et ses actions, rien d'autre
+	@tableau path /webhook/tableau /webhook/tableau/action
+	handle @tableau {
+		reverse_proxy n8n:5678 {
+			# n8n n'accepte que « localhost » (protection anti DNS rebinding conservée)
+			header_up Host localhost:5678
+		}
+	}
+	handle / {
+		redir * /webhook/tableau
+	}
+	handle {
+		respond "Introuvable." 404
+	}
+}

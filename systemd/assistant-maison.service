@@ -1,0 +1,7 @@
+[Unit]
+Description=Accès au tableau de bord sur le réseau de la maison uniquement
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/secure-n8n-assistant/maison.sh
