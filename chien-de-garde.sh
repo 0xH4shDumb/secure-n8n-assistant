@@ -40,6 +40,7 @@ publier_etat() {
     done
     printf '}}\n'
   } > "$PUBLIC/etat.tmp" && mv "$PUBLIC/etat.tmp" "$PUBLIC/etat.json"
+  chmod 600 "$PUBLIC/etat.json" "$PUBLIC/journal.log" 2>/dev/null || true
 }
 
 alerter() {

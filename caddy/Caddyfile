@@ -27,7 +27,24 @@ https://{$LAN_IP}:8443, https://{$NOM_HOTE}.local:8443 {
 		X-Frame-Options "DENY"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
+		Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Cross-Origin-Opener-Policy "same-origin"
 		-Server
+		-Via
+		-Etag
+	}
+
+	# Bloque toute Origin étrangère sur les actions POST (défense en profondeur avec le jeton CSRF).
+	# En « handle » pour passer avant le reverse_proxy.
+	@origine_etrangere {
+		method POST
+		header Origin *
+		not header Origin https://{$LAN_IP}:8443
+		not header Origin https://{$NOM_HOTE}.local:8443
+	}
+	handle @origine_etrangere {
+		respond "Origine refusée." 403
 	}
 
 	# Le tableau de bord et ses actions, rien d'autre
@@ -36,6 +53,8 @@ https://{$LAN_IP}:8443, https://{$NOM_HOTE}.local:8443 {
 		reverse_proxy n8n:5678 {
 			# n8n n'accepte que « localhost » (protection anti DNS rebinding conservée)
 			header_up Host localhost:5678
+			# Origine légitime injectée par Caddy : le workflow la valide (un client ne peut pas la forger via Caddy)
+			header_up X-Allowed-Origin "https://{$LAN_IP}:8443"
 		}
 	}
 	handle / {
